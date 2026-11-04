@@ -202,7 +202,8 @@ impl Indicator {
     pub fn new(style: Style, colours: Colours) -> Rc<Indicator> {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
         root.add_css_class("signin-indicator");
-        root.set_halign(gtk::Align::Center);
+        // The card's width, so the scanner's words fit on a line.
+        root.set_halign(gtk::Align::Fill);
         let area = gtk::DrawingArea::new();
         area.set_halign(gtk::Align::Center);
         let glow = gtk::DrawingArea::new();
@@ -262,8 +263,16 @@ impl Indicator {
     }
 
     pub fn set_style(&self, style: Style) {
-        self.state.borrow_mut().style = style;
+        let tick = {
+            let mut s = self.state.borrow_mut();
+            s.style = style;
+            s.tick.take()
+        };
+        if let Some(id) = tick {
+            id.remove();
+        }
         self.restyle();
+        self.animate();
     }
 
     pub fn set_colours(&self, colours: Colours) {
@@ -337,13 +346,16 @@ impl Indicator {
 
     /// Keep drawing while something moves; stop when nothing does.
     fn animate(&self) {
+        self.area.queue_draw();
+        self.glow.queue_draw();
         if self.state.borrow().tick.is_some() {
-            self.area.queue_draw();
             return;
         }
         let st = self.state.clone();
-        let glow = self.glow.clone();
-        let id = self.area.add_tick_callback(move |area, clock| {
+        let (area, glow) = (self.area.clone(), self.glow.clone());
+        // Edge glow has no drawing on the card; a hidden widget's ticks never come.
+        let host = if self.state.borrow().style == Style::Edge { &self.glow } else { &self.area };
+        let id = host.add_tick_callback(move |_, clock| {
             let mut s = st.borrow_mut();
             s.now = clock.frame_time();
             area.queue_draw();
