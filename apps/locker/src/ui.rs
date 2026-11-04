@@ -179,8 +179,10 @@ fn lock(l: &Rc<Locker>) {
     let wl = Rc::downgrade(l);
     inst.connect_monitor(move |inst, monitor| {
         let Some(l) = wl.upgrade() else { return };
+        // Assigned before it's shown: the lock surface is made when it's realised.
         let w = window(&l, false);
         inst.assign_window_to_monitor(&w, monitor);
+        w.present();
     });
     let wl = Rc::downgrade(l);
     inst.connect_locked(move |_| {
@@ -319,9 +321,6 @@ fn window(l: &Rc<Locker>, demo: bool) -> gtk::Window {
     w.add_controller(motion);
     w.set_child(Some(&overlay));
     l.screens.borrow_mut().push(Screen { entry, status, indicator, card, time, date });
-    if !demo {
-        w.present();
-    }
     w
 }
 
