@@ -17,4 +17,5 @@ gtk.workspace = true
 gtk4-layer-shell.workspace = true
 nyx-greetd = { path = "../../crates/nyx-greetd" }
 nyx-greeter-core = { path = "../../crates/nyx-greeter-core" }
+nyx-signin-ui = { path = "../../crates/nyx-signin-ui" }
 nyx-theme.workspace = true

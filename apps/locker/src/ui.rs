@@ -40,10 +40,14 @@ fn config_home() -> PathBuf {
 
 /// `appearance.toml`'s `key`: the user's, else the system's default.
 fn appearance(key: &str) -> Option<String> {
-    [config_home().join("nyx/appearance.toml"), PathBuf::from("/etc/nyxos/overrides/appearance.toml"), PathBuf::from("/etc/nyxos/defaults/appearance.toml")]
-        .iter()
-        .filter_map(|p| std::fs::read_to_string(p).ok()?.parse::<toml::Table>().ok())
-        .find_map(|t| t.get(key)?.as_str().map(String::from))
+    [
+        config_home().join("nyx/appearance.toml"),
+        PathBuf::from("/etc/nyxos/overrides/appearance.toml"),
+        PathBuf::from("/etc/nyxos/defaults/appearance.toml"),
+    ]
+    .iter()
+    .filter_map(|p| std::fs::read_to_string(p).ok()?.parse::<toml::Table>().ok())
+    .find_map(|t| t.get(key)?.as_str().map(String::from))
 }
 
 /// The wallpaper nyx-themed chose for the lock screen (`$nyx_wallpaper`).
@@ -56,7 +60,9 @@ fn themed_wallpaper() -> Option<PathBuf> {
 impl Look {
     pub fn load(style: Option<Style>) -> Look {
         Look {
-            theme: appearance("lock-theme").or_else(|| nyx_theme::read_suite().map(|s| s.theme)).unwrap_or_else(|| "nyx-dark".into()),
+            theme: appearance("lock-theme")
+                .or_else(|| nyx_theme::read_suite().map(|s| s.theme))
+                .unwrap_or_else(|| "nyx-dark".into()),
             style: style.or_else(|| appearance("lock-style").as_deref().and_then(Style::parse)).unwrap_or_default(),
             wallpaper: themed_wallpaper(),
         }
@@ -84,18 +90,6 @@ pub fn install_css() {
         // The lock-screen theme is its own; a suite theme change doesn't restyle it.
         set_theme: Some(|_, _| {}),
     });
-}
-
-fn colours(theme: &str) -> Colours {
-    let t = nyx_theme::all().into_iter().find(|t| t.id == nyx_theme::current_id(theme));
-    match t {
-        Some(t) => {
-            let p = &t.palette;
-            let green = t.look.swatches.iter().find(|(n, _)| n == "green").map(|(_, c)| c.clone()).unwrap_or_else(|| "#4fd18b".into());
-            Colours::from_hex(&p.accent, &p.surface, &p.text, &p.dim_text, &green, &p.danger)
-        }
-        None => Colours::default(),
-    }
 }
 
 struct Screen {
@@ -263,7 +257,7 @@ fn window(l: &Rc<Locker>, demo: bool) -> gtk::Window {
     avatar.set_halign(gtk::Align::Center);
     let who = gtk::Label::new(Some(&name));
     who.add_css_class("name");
-    let indicator = Indicator::new(l.look.style, colours(&l.look.theme));
+    let indicator = Indicator::new(l.look.style, Colours::of_theme(&l.look.theme));
     let entry = gtk::PasswordEntry::new();
     entry.set_show_peek_icon(true);
     entry.add_css_class("password");

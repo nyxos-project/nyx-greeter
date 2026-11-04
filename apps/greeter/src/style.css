@@ -94,3 +94,19 @@ button.power:hover {
   80% { margin-left: 0; margin-right: 6px; }
   100% { margin-left: 0; margin-right: 0; }
 }
+
+.signin-indicator-label {
+  font-size: 14px;
+  color: @theme_text;
+}
+
+.signin-indicator-label.monospace {
+  font-family: monospace;
+  letter-spacing: 2px;
+  font-size: 12px;
+  color: @theme_accent;
+}
+
+.signin-indicator-label.error {
+  color: @theme_danger;
+}

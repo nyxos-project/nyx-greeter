@@ -8,6 +8,10 @@ theme = "nyx-dark"
 # wallpaper = "/usr/share/backgrounds/nyx/nyx-dark/monochrome/nyx_monochrome_02_4K.jpg"
 dim = 0.55
 
+# The sign-in animation while a fingerprint, face or security key is checked:
+# circular, cyberpunk, minimal or edge.
+style = "circular"
+
 # The mark above the card (a PNG or SVG).
 # mark = "/usr/share/nyx-greeter/mark.png"
 

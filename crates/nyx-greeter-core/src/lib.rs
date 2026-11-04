@@ -14,10 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 fn env_path(var: &str, default: &str) -> PathBuf {
-    std::env::var_os(var)
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(default))
+    std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -40,6 +37,9 @@ pub struct Config {
     pub session_dirs: Vec<PathBuf>,
     /// The mark above the card.
     pub mark: Option<PathBuf>,
+    /// The sign-in animation for a fingerprint, face or key: `circular`, `cyberpunk`,
+    /// `minimal` or `edge`.
+    pub style: String,
 }
 
 impl Default for Config {
@@ -54,6 +54,7 @@ impl Default for Config {
             default_session: None,
             session_dirs: vec![],
             mark: None,
+            style: "circular".into(),
         }
     }
 }
@@ -90,10 +91,7 @@ impl State {
     }
 
     pub fn load() -> State {
-        std::fs::read_to_string(State::path())
-            .ok()
-            .and_then(|t| toml::from_str(&t).ok())
-            .unwrap_or_default()
+        std::fs::read_to_string(State::path()).ok().and_then(|t| toml::from_str(&t).ok()).unwrap_or_default()
     }
 
     pub fn save(&self) {

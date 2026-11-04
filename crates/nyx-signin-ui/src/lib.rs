@@ -100,6 +100,26 @@ impl Colours {
     }
 }
 
+impl Colours {
+    /// A Nyx theme's colours (its accent, surface, text, dim text, green and danger).
+    pub fn of_theme(id: &str) -> Colours {
+        match nyx_theme::all().into_iter().find(|t| t.id == nyx_theme::current_id(id)) {
+            Some(t) => {
+                let p = &t.palette;
+                let green = t
+                    .look
+                    .swatches
+                    .iter()
+                    .find(|(n, _)| n == "green")
+                    .map(|(_, c)| c.clone())
+                    .unwrap_or_else(|| "#4fd18b".into());
+                Colours::from_hex(&p.accent, &p.surface, &p.text, &p.dim_text, &green, &p.danger)
+            }
+            None => Colours::default(),
+        }
+    }
+}
+
 impl Default for Colours {
     fn default() -> Self {
         Colours::from_hex("#5b9cff", "#141418", "#e8e8ec", "#8a8a94", "#4fd18b", "#ff6b6b")
@@ -231,6 +251,14 @@ impl Indicator {
 
     pub fn style(&self) -> Style {
         self.state.borrow().style
+    }
+
+    pub fn kind(&self) -> Kind {
+        self.state.borrow().kind
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.state.borrow().phase
     }
 
     pub fn set_style(&self, style: Style) {
@@ -448,6 +476,22 @@ fn draw_edge(s: &State, cr: &cairo::Context, w: f64, h: f64) {
     }
 }
 
+/// Which way in a PAM message is about, for a flow that only has PAM's words (greetd's
+/// one conversation): pam_fprintd's reader, a face module's camera, pam_u2f's key.
+pub fn kind_of(message: &str) -> Option<Kind> {
+    let m = message.to_lowercase();
+    let any = |words: &[&str]| words.iter().any(|w| m.contains(w));
+    if any(&["finger", "reader", "swipe"]) {
+        Some(Kind::Fingerprint)
+    } else if any(&["face", "camera", "looking for"]) {
+        Some(Kind::Face)
+    } else if any(&["security key", "fido", "u2f", "token", "touch your key", "insert your key"]) {
+        Some(Kind::Key)
+    } else {
+        None
+    }
+}
+
 /// A person's picture, or their initials on the accent.
 pub fn avatar(picture: Option<&std::path::Path>, initials: &str, size: i32) -> gtk::Widget {
     if let Some(p) = picture
@@ -478,7 +522,9 @@ pub fn initials(full_name: &str, login: &str) -> String {
 
 /// The picture for `user`: AccountsService's, else `~/.face`.
 pub fn picture_of(user: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
-    [std::path::PathBuf::from(format!("/var/lib/AccountsService/icons/{user}")), home.join(".face")].into_iter().find(|p| p.is_file())
+    [std::path::PathBuf::from(format!("/var/lib/AccountsService/icons/{user}")), home.join(".face")]
+        .into_iter()
+        .find(|p| p.is_file())
 }
 
 #[cfg(test)]
@@ -494,6 +540,16 @@ mod tests {
         for s in Style::ALL {
             assert_eq!(Style::parse(s.id()), Some(s));
         }
+    }
+
+    #[test]
+    fn pam_messages_name_their_way_in() {
+        assert_eq!(kind_of("Place your finger on the reader"), Some(Kind::Fingerprint));
+        assert_eq!(kind_of("Swipe your right index finger across the fingerprint reader"), Some(Kind::Fingerprint));
+        assert_eq!(kind_of("Looking for your face…"), Some(Kind::Face));
+        assert_eq!(kind_of("Please touch the FIDO authenticator"), Some(Kind::Key));
+        assert_eq!(kind_of("Password"), None);
+        assert_eq!(kind_of("Your password will expire in 3 days"), None);
     }
 
     #[test]

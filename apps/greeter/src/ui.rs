@@ -8,6 +8,7 @@ use nyx_greeter_core::flow::{self, Command, Event};
 use nyx_greeter_core::sessions::{self, Session};
 use nyx_greeter_core::users::{self, User};
 use nyx_greeter_core::{Config, State};
+use nyx_signin_ui::{Colours, Indicator, Kind, Phase, Style};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -46,6 +47,8 @@ struct Card {
     entry: gtk::Entry,
     status: gtk::Label,
     spinner: gtk::Spinner,
+    /// Shown once PAM asks for a fingerprint, a face or a key.
+    indicator: Rc<Indicator>,
     sessions: gtk::DropDown,
     users_button: gtk::MenuButton,
     root: gtk::Box,
@@ -74,8 +77,7 @@ pub fn start(app: &gtk::Application, config: Config, opts: Options) {
     std::mem::forget(app.hold());
     let mut fake = None;
     let socket = if opts.demo {
-        let path =
-            std::env::temp_dir().join(format!("nyx-greeter-demo-{}.sock", std::process::id()));
+        let path = std::env::temp_dir().join(format!("nyx-greeter-demo-{}.sock", std::process::id()));
         let rules = nyx_greetd::fake::Rules {
             fingerprint: opts.finger,
             finger_wait: Duration::from_secs(if opts.finger { 4 } else { 0 }),
@@ -101,9 +103,7 @@ pub fn start(app: &gtk::Application, config: Config, opts: Options) {
     });
     let mut users = users::all();
     if users.is_empty() && opts.demo {
-        users = users::parse(
-            "ken:x:1000:1000:Ken Smith:/home/ken:/bin/zsh\namy:x:1001:1001:Amy Smith:/home/amy:/bin/zsh\n",
-        );
+        users = users::parse("ken:x:1000:1000:Ken Smith:/home/ken:/bin/zsh\namy:x:1001:1001:Amy Smith:/home/amy:/bin/zsh\n");
     }
     let state = State::load();
     let sessions = sessions::all(&config.session_dirs);
@@ -140,11 +140,7 @@ pub fn start(app: &gtk::Application, config: Config, opts: Options) {
     });
     let first = {
         let st = g.state.borrow();
-        st.last_user
-            .as_ref()
-            .and_then(|n| g.users.iter().find(|u| &u.name == n))
-            .or(g.users.first())
-            .cloned()
+        st.last_user.as_ref().and_then(|n| g.users.iter().find(|u| &u.name == n)).or(g.users.first()).cloned()
     };
     if let Some(u) = first {
         choose_user(&g, u);
@@ -166,19 +162,12 @@ fn monitors(only: Option<&str>) -> Vec<gdk::Monitor> {
     let Some(d) = gdk::Display::default() else {
         return vec![];
     };
-    d.monitors()
-        .iter::<gdk::Monitor>()
-        .flatten()
-        .filter(|m| only.is_none_or(|o| m.connector().as_deref() == Some(o)))
-        .collect()
+    d.monitors().iter::<gdk::Monitor>().flatten().filter(|m| only.is_none_or(|o| m.connector().as_deref() == Some(o))).collect()
 }
 
 fn build_windows(g: &Rc<Greeter>) {
     let mons = monitors(g.opts.only.as_deref());
-    let main = mons
-        .iter()
-        .max_by_key(|m| m.geometry().width() * m.geometry().height())
-        .cloned();
+    let main = mons.iter().max_by_key(|m| m.geometry().width() * m.geometry().height()).cloned();
     for m in &mons {
         let w = gtk::Window::new();
         w.set_application(Some(&g.app));
@@ -193,11 +182,7 @@ fn build_windows(g: &Rc<Greeter>) {
         w.set_exclusive_zone(-1);
         let is_main = main.as_ref() == Some(m);
         // A test copy never takes the keyboard from whoever is at the computer.
-        w.set_keyboard_mode(if is_main && !test_mode(&g.opts) {
-            KeyboardMode::Exclusive
-        } else {
-            KeyboardMode::None
-        });
+        w.set_keyboard_mode(if is_main && !test_mode(&g.opts) { KeyboardMode::Exclusive } else { KeyboardMode::None });
         let overlay = gtk::Overlay::new();
         let bg = gtk::Picture::new();
         bg.set_content_fit(gtk::ContentFit::Cover);
@@ -211,10 +196,7 @@ fn build_windows(g: &Rc<Greeter>) {
         let dim = gtk::Box::new(gtk::Orientation::Vertical, 0);
         dim.add_css_class("dim");
         let provider = gtk::CssProvider::new();
-        provider.load_from_string(&format!(
-            ".dim {{ background-color: alpha(black, {:.2}); }}",
-            g.config.dim.clamp(0.0, 0.95)
-        ));
+        provider.load_from_string(&format!(".dim {{ background-color: alpha(black, {:.2}); }}", g.config.dim.clamp(0.0, 0.95)));
         gtk::style_context_add_provider_for_display(
             &WidgetExt::display(&w),
             &provider,
@@ -249,6 +231,9 @@ fn build_windows(g: &Rc<Greeter>) {
             content.append(&power_row(g));
         }
         overlay.add_overlay(&content);
+        if is_main && let Some(c) = g.card.borrow().as_ref() {
+            overlay.add_overlay(c.indicator.glow());
+        }
         w.set_child(Some(&overlay));
         w.present();
     }
@@ -289,13 +274,10 @@ fn power_row(g: &Rc<Greeter>) -> gtk::Box {
 
 fn mark(g: &Greeter) -> Option<gtk::Image> {
     let path = g.config.mark.clone().or_else(|| {
-        [
-            "/run/current-system/sw/share/nyx/brand/nyx-mark.png",
-            "/usr/share/nyx/brand/nyx-mark.png",
-        ]
-        .iter()
-        .map(std::path::PathBuf::from)
-        .find(|p| p.exists())
+        ["/run/current-system/sw/share/nyx/brand/nyx-mark.png", "/usr/share/nyx/brand/nyx-mark.png"]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .find(|p| p.exists())
     })?;
     let t = gdk::Texture::from_filename(path).ok()?;
     let p = gtk::Image::from_paintable(Some(&t));
@@ -384,10 +366,19 @@ fn build_card(g: &Rc<Greeter>) -> Rc<Card> {
     bottom.set_halign(gtk::Align::Center);
     bottom.append(&sessions);
     bottom.append(&users_button);
+    let style = Style::parse(&g.config.style).unwrap_or_default();
+    let indicator = Indicator::new(style, Colours::of_theme(&g.config.theme));
+    indicator.widget().set_visible(false);
     card.append(&avatar);
     card.append(&name);
+    if style != Style::Edge {
+        card.append(indicator.widget());
+    }
     card.append(&entry);
     card.append(&status_row);
+    if style == Style::Edge {
+        card.append(indicator.widget());
+    }
     card.append(&bottom);
     root.append(&card);
     let wg = Rc::downgrade(g);
@@ -395,7 +386,13 @@ fn build_card(g: &Rc<Greeter>) -> Rc<Card> {
         let Some(g) = wg.upgrade() else { return };
         let text = e.text().to_string();
         e.set_sensitive(false);
-        set_status(&g, "Checking…", false, true);
+        match g.card.borrow().as_ref() {
+            Some(c) if c.indicator.widget().is_visible() => {
+                set_status(&g, "", false, false);
+                c.indicator.set(Kind::Password, Phase::Scanning, "");
+            }
+            _ => set_status(&g, "Checking…", false, true),
+        }
         let _ = g.tx.send(Command::Answer(text));
     });
     let keys = gtk::EventControllerKey::new();
@@ -411,16 +408,7 @@ fn build_card(g: &Rc<Greeter>) -> Rc<Card> {
         glib::Propagation::Proceed
     });
     root.add_controller(keys);
-    Rc::new(Card {
-        avatar,
-        name,
-        entry,
-        status,
-        spinner,
-        sessions,
-        users_button,
-        root,
-    })
+    Rc::new(Card { avatar, name, entry, status, spinner, indicator, sessions, users_button, root })
 }
 
 fn avatar_widget(u: &User, size: i32) -> gtk::Widget {
@@ -455,22 +443,19 @@ fn choose_user(g: &Rc<Greeter>, u: User) {
         c.name.set_text(&u.display);
         c.entry.set_text("");
         c.entry.set_sensitive(false);
-        c.entry
-            .update_property(&[gtk::accessible::Property::Label(&format!(
-                "Password for {}",
-                u.display
-            ))]);
+        c.entry.update_property(&[gtk::accessible::Property::Label(&format!("Password for {}", u.display))]);
         let remembered = g.state.borrow().sessions.get(&u.name).cloned();
-        if let Some(s) = sessions::pick(
-            &g.sessions,
-            remembered.as_deref(),
-            g.config.default_session.as_deref(),
-        ) && let Some(i) = g.sessions.iter().position(|x| x.id == s.id)
+        if let Some(s) = sessions::pick(&g.sessions, remembered.as_deref(), g.config.default_session.as_deref())
+            && let Some(i) = g.sessions.iter().position(|x| x.id == s.id)
         {
             c.sessions.set_selected(i as u32);
         }
     }
     set_status(g, "", false, false);
+    if let Some(c) = g.card.borrow().as_ref() {
+        c.indicator.set(Kind::Password, Phase::Idle, "");
+        c.indicator.widget().set_visible(false);
+    }
     let name = u.name.clone();
     *g.user.borrow_mut() = Some(u);
     let _ = g.tx.send(Command::Login(name));
@@ -492,9 +477,7 @@ fn set_status(g: &Greeter, text: &str, error: bool, busy: bool) {
 fn shake(c: &Card) {
     c.root.add_css_class("shake");
     let r = c.root.clone();
-    glib::timeout_add_local_once(Duration::from_millis(450), move || {
-        r.remove_css_class("shake")
-    });
+    glib::timeout_add_local_once(Duration::from_millis(450), move || r.remove_css_class("shake"));
 }
 
 fn on_event(g: &Rc<Greeter>, e: Event) {
@@ -503,14 +486,14 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
         Event::Prompt { text, secret } => {
             if let Some(c) = &card {
                 c.entry.set_visibility(!secret);
-                c.entry.set_placeholder_text(Some(if text.is_empty() {
-                    "Password"
-                } else {
-                    &text
-                }));
+                c.entry.set_placeholder_text(Some(if text.is_empty() { "Password" } else { &text }));
                 c.entry.set_sensitive(true);
                 c.entry.grab_focus();
                 c.spinner.set_visible(false);
+                // The reader or camera gave up and PAM went on to the password.
+                if c.indicator.phase() == Phase::Scanning && c.indicator.kind() != Kind::Password {
+                    c.indicator.set(c.indicator.kind(), Phase::Timeout, "Use your password");
+                }
                 if let Some(t) = g.opts.type_text.clone()
                     && !g.typed_once.replace(true)
                 {
@@ -519,17 +502,22 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
                 }
             }
         }
+        Event::Info(text) if biometric(g, &text, false) => {}
         Event::Info(text) => set_status(g, &text, false, true),
-        Event::Notice(text) => set_status(g, &text, true, false),
+        Event::Notice(text) => {
+            if !biometric(g, &text, true) {
+                set_status(g, &text, true, false);
+            }
+        }
         Event::Authenticated => {
             set_status(g, "Starting…", false, true);
+            if let Some(c) = &card
+                && c.indicator.widget().is_visible()
+            {
+                c.indicator.set(c.indicator.kind(), Phase::Success, "");
+            }
             let Some(c) = card else { return };
-            let Some(s) = g
-                .sessions
-                .get(c.sessions.selected() as usize)
-                .cloned()
-                .or_else(|| g.sessions.first().cloned())
-            else {
+            let Some(s) = g.sessions.get(c.sessions.selected() as usize).cloned().or_else(|| g.sessions.first().cloned()) else {
                 set_status(g, "No sessions are installed.", true, false);
                 return;
             };
@@ -539,10 +527,7 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
                     g.state.borrow().save();
                 }
             }
-            let _ = g.tx.send(Command::Start {
-                cmd: s.cmd.clone(),
-                env: s.env(),
-            });
+            let _ = g.tx.send(Command::Start { cmd: s.cmd.clone(), env: s.env() });
         }
         Event::Started => {
             if test_mode(&g.opts) {
@@ -555,6 +540,9 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
             if let Some(c) = &card {
                 c.entry.set_text("");
                 shake(c);
+                if c.indicator.widget().is_visible() {
+                    c.indicator.set(c.indicator.kind(), Phase::Failure, &msg);
+                }
             }
             set_status(g, &msg, true, false);
             let user = g.user.borrow().as_ref().map(|u| u.name.clone());
@@ -571,14 +559,29 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
     }
 }
 
+/// A message about a fingerprint, a face or a key goes to the indicator (shown from
+/// then on): scanning, or a miss when `miss`. Whether it was one.
+fn biometric(g: &Greeter, text: &str, miss: bool) -> bool {
+    let Some(kind) = nyx_signin_ui::kind_of(text) else {
+        return false;
+    };
+    let Some(c) = g.card.borrow().clone() else {
+        return false;
+    };
+    c.indicator.widget().set_visible(true);
+    let failed = miss || text.to_lowercase().contains("fail") || text.to_lowercase().contains("not match");
+    c.indicator.set(kind, if failed { Phase::Failure } else { Phase::Scanning }, text);
+    c.spinner.set_visible(false);
+    c.status.set_text("");
+    true
+}
+
 fn tick_clocks(g: &Greeter) {
     let now = glib::DateTime::now_local().ok();
     let (t, d) = match &now {
         Some(n) => (
             n.format("%H:%M").map(|s| s.to_string()).unwrap_or_default(),
-            n.format("%A, %B %-e")
-                .map(|s| s.to_string())
-                .unwrap_or_default(),
+            n.format("%A, %B %-e").map(|s| s.to_string()).unwrap_or_default(),
         ),
         None => (String::new(), String::new()),
     };
