@@ -55,6 +55,10 @@ fn main() -> std::process::ExitCode {
             }
         }
     }
+    if let Err(e) = gtk::init() {
+        eprintln!("nyx-locker: {e}");
+        return std::process::ExitCode::from(1);
+    }
     if !o.demo && !gtk4_session_lock::is_supported() {
         eprintln!("nyx-locker: this compositor can't lock the session (ext-session-lock-v1)");
         return std::process::ExitCode::from(1);
