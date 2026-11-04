@@ -224,7 +224,10 @@ fn window(l: &Rc<Locker>, demo: bool) -> gtk::Window {
     }
     overlay.set_child(Some(&bg));
     let dim = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    dim.add_css_class("dim");
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string("box.lock-dim { background-color: alpha(black, 0.55); }");
+    gtk::style_context_add_provider_for_display(&WidgetExt::display(&w), &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+    dim.add_css_class("lock-dim");
     overlay.add_overlay(&dim);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);

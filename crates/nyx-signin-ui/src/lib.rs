@@ -268,7 +268,11 @@ impl Indicator {
 
     fn refresh_label(&self, message: Option<&str>) {
         let s = self.state.borrow();
-        let text = message.filter(|m| !m.is_empty()).map(str::to_string).unwrap_or_else(|| label(s.style, s.kind, s.phase));
+        // The scanner speaks its own terse way; the others say what PAM says.
+        let text = message
+            .filter(|m| !m.is_empty() && s.style != Style::Cyberpunk)
+            .map(str::to_string)
+            .unwrap_or_else(|| label(s.style, s.kind, s.phase));
         self.label.set_text(&text);
         self.label.set_visible(!text.is_empty());
         self.label.remove_css_class("error");

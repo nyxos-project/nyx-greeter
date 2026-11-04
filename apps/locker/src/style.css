@@ -99,10 +99,6 @@ button.power:hover {
   font-size: 96px;
 }
 
-.dim {
-  background-color: alpha(black, 0.5);
-}
-
 .signin-indicator-label {
   font-size: 14px;
   color: @theme_text;
