@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/nyx-greetd", "crates/nyx-greeter-core", "apps/greeter"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+authors = ["Ken Smith"]
+repository = "https://github.com/nyxos-project/nyx-greeter"
+
+[workspace.dependencies]
+async-channel = "2"
+gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
+gtk4-layer-shell = "0.8"
+nyx-theme = { git = "https://github.com/design-nexus/nyx-design.git", rev = "976fed940841a2a505ffe644f632cb60e12988a8" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+
+[profile.release]
+lto = "thin"
+strip = true

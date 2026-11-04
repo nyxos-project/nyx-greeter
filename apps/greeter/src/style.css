@@ -1,0 +1,96 @@
+/* Nyx Greeter. Solid surfaces over the wallpaper; no glass. */
+
+window.nyx-greeter {
+  background-color: @theme_bg;
+  color: @theme_text;
+}
+
+.clock {
+  font-size: 72px;
+  font-weight: 300;
+  color: @theme_text;
+  letter-spacing: 2px;
+}
+
+.date {
+  font-size: 17px;
+  color: alpha(@theme_text, 0.75);
+}
+
+.card {
+  background-color: @theme_card;
+  border: 1px solid @hairline;
+  border-radius: 15px;
+  padding: 28px 32px 22px;
+  box-shadow: 0 12px 40px alpha(black, 0.45);
+}
+
+.initials {
+  border-radius: 999px;
+  background-color: @theme_accent;
+  color: @theme_on_accent;
+  font-size: 32px;
+  font-weight: 600;
+}
+
+.initials.small {
+  font-size: 11px;
+  min-width: 28px;
+  min-height: 28px;
+}
+
+.avatar-image {
+  border-radius: 999px;
+}
+
+.name {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+entry.password {
+  min-height: 40px;
+  border-radius: 11px;
+  font-size: 15px;
+}
+
+.status {
+  font-size: 13px;
+  color: @theme_dim_text;
+  min-height: 18px;
+}
+
+.status.error {
+  color: @theme_danger;
+}
+
+button.power {
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 999px;
+  color: alpha(@theme_text, 0.85);
+  background-color: alpha(@theme_card, 0.85);
+}
+
+button.power:hover {
+  background-color: @theme_card;
+  color: @theme_text;
+}
+
+.user-row {
+  padding: 6px 10px;
+  border-radius: 7px;
+}
+
+.shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+@keyframes shake {
+  0% { margin-left: 0; margin-right: 0; }
+  20% { margin-left: 18px; margin-right: 0; }
+  40% { margin-left: 0; margin-right: 18px; }
+  60% { margin-left: 12px; margin-right: 0; }
+  80% { margin-left: 0; margin-right: 6px; }
+  100% { margin-left: 0; margin-right: 0; }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "nyx-greeter-core"
+version = "0.1.0"
+description = "Nyx Greeter without GTK: users, sessions, settings, and the login flow"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+nyx-greetd = { path = "../nyx-greetd" }
+serde.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

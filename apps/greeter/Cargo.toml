@@ -1,0 +1,20 @@
+[package]
+name = "nyx-greeter"
+version = "0.1.0"
+description = "Nyx Greeter: the NyxOS login screen, for greetd"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nyx-greeter"
+path = "src/main.rs"
+
+[dependencies]
+async-channel.workspace = true
+gtk.workspace = true
+gtk4-layer-shell.workspace = true
+nyx-greetd = { path = "../../crates/nyx-greetd" }
+nyx-greeter-core = { path = "../../crates/nyx-greeter-core" }
+nyx-theme.workspace = true
