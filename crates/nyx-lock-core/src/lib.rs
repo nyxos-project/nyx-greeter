@@ -80,15 +80,31 @@ impl Config {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     /// The method asks for something to type (`secret`: don't show it).
-    Prompt { method: Method, text: String, secret: bool },
-    Info { method: Method, text: String },
-    Error { method: Method, text: String },
+    Prompt {
+        method: Method,
+        text: String,
+        secret: bool,
+    },
+    Info {
+        method: Method,
+        text: String,
+    },
+    Error {
+        method: Method,
+        text: String,
+    },
     /// It worked: unlock.
     Granted(Method),
     /// It didn't match; the method can be tried again.
-    Denied { method: Method, text: String },
+    Denied {
+        method: Method,
+        text: String,
+    },
     /// It can't be used now (no reader, no key, the service is missing).
-    Unavailable { method: Method, text: String },
+    Unavailable {
+        method: Method,
+        text: String,
+    },
 }
 
 /// What PAM's result means to the person.
@@ -166,7 +182,9 @@ pub fn user() -> String {
     std::env::var("USER").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| {
         let uid = std::fs::read_to_string("/proc/self/status")
             .ok()
-            .and_then(|s| s.lines().find_map(|l| l.strip_prefix("Uid:")).and_then(|v| v.split_whitespace().next().map(String::from)))
+            .and_then(|s| {
+                s.lines().find_map(|l| l.strip_prefix("Uid:")).and_then(|v| v.split_whitespace().next().map(String::from))
+            })
             .unwrap_or_default();
         std::fs::read_to_string("/etc/passwd")
             .unwrap_or_default()
@@ -192,7 +210,9 @@ mod tests {
 
     #[test]
     fn results_read_as_words() {
-        assert!(matches!(denial(Method::Password, ErrorCode::AUTH_ERR), Event::Denied { text, .. } if text == "That password didn't work"));
+        assert!(
+            matches!(denial(Method::Password, ErrorCode::AUTH_ERR), Event::Denied { text, .. } if text == "That password didn't work")
+        );
         assert!(matches!(denial(Method::Face, ErrorCode::AUTHINFO_UNAVAIL), Event::Unavailable { .. }));
     }
 }

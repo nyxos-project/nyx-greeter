@@ -59,14 +59,8 @@ fn main() -> std::process::ExitCode {
     }
     let config = nyx_greeter_core::Config::load();
     ui::theme(&config.theme);
-    let id = std::env::var("NYX_GREETER_APP_ID")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| APP_ID.into());
-    let app = gtk::Application::builder()
-        .application_id(id)
-        .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
-        .build();
+    let id = std::env::var("NYX_GREETER_APP_ID").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| APP_ID.into());
+    let app = gtk::Application::builder().application_id(id).flags(gtk::gio::ApplicationFlags::NON_UNIQUE).build();
     app.connect_startup(|_| ui::install_css());
     let started = std::cell::Cell::new(false);
     app.connect_activate(move |app| {

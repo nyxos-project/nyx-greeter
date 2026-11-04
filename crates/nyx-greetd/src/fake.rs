@@ -18,11 +18,7 @@ pub struct Rules {
 
 impl Default for Rules {
     fn default() -> Self {
-        Rules {
-            password: "nyx".into(),
-            fingerprint: false,
-            finger_wait: std::time::Duration::ZERO,
-        }
+        Rules { password: "nyx".into(), fingerprint: false, finger_wait: std::time::Duration::ZERO }
     }
 }
 
@@ -100,10 +96,7 @@ pub fn serve(path: &Path, rules: Rules) -> std::io::Result<Fake> {
                             } else {
                                 log.lock().unwrap().failures += 1;
                                 step = Step::Idle;
-                                Response::Error {
-                                    error_type: ErrorType::AuthError,
-                                    description: "Authentication failure".into(),
-                                }
+                                Response::Error { error_type: ErrorType::AuthError, description: "Authentication failure".into() }
                             }
                         }
                         (Request::StartSession { cmd, env }, Step::Authenticated(u)) => {
@@ -115,10 +108,7 @@ pub fn serve(path: &Path, rules: Rules) -> std::io::Result<Fake> {
                             step = Step::Idle;
                             Response::Success
                         }
-                        _ => Response::Error {
-                            error_type: ErrorType::Error,
-                            description: "not now".into(),
-                        },
+                        _ => Response::Error { error_type: ErrorType::Error, description: "not now".into() },
                     };
                     if write_message(&mut s, &reply).is_err() {
                         return;
@@ -127,10 +117,7 @@ pub fn serve(path: &Path, rules: Rules) -> std::io::Result<Fake> {
             });
         }
     });
-    Ok(Fake {
-        path: path.to_path_buf(),
-        log,
-    })
+    Ok(Fake { path: path.to_path_buf(), log })
 }
 
 #[cfg(test)]
@@ -142,70 +129,18 @@ mod tests {
     fn a_whole_login() {
         let dir = std::env::temp_dir().join(format!("nyx-greetd-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let fake = serve(
-            &dir.join("sock"),
-            Rules {
-                fingerprint: true,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let fake = serve(&dir.join("sock"), Rules { fingerprint: true, ..Default::default() }).unwrap();
         let mut c = Client::connect(Some(&fake.path)).unwrap();
-        let r = c
-            .request(&Request::CreateSession {
-                username: "ken".into(),
-            })
-            .unwrap();
-        assert!(matches!(
-            r,
-            Response::AuthMessage {
-                auth_message_type: AuthMessageType::Info,
-                ..
-            }
-        ));
-        let r = c
-            .request(&Request::PostAuthMessageResponse { response: None })
-            .unwrap();
-        assert!(matches!(
-            r,
-            Response::AuthMessage {
-                auth_message_type: AuthMessageType::Secret,
-                ..
-            }
-        ));
-        let r = c
-            .request(&Request::PostAuthMessageResponse {
-                response: Some("wrong".into()),
-            })
-            .unwrap();
-        assert!(matches!(
-            r,
-            Response::Error {
-                error_type: ErrorType::AuthError,
-                ..
-            }
-        ));
-        c.request(&Request::CreateSession {
-            username: "ken".into(),
-        })
-        .unwrap();
-        c.request(&Request::PostAuthMessageResponse { response: None })
-            .unwrap();
-        assert_eq!(
-            c.request(&Request::PostAuthMessageResponse {
-                response: Some("nyx".into())
-            })
-            .unwrap(),
-            Response::Success
-        );
-        assert_eq!(
-            c.request(&Request::StartSession {
-                cmd: vec!["Hyprland".into()],
-                env: vec![]
-            })
-            .unwrap(),
-            Response::Success
-        );
+        let r = c.request(&Request::CreateSession { username: "ken".into() }).unwrap();
+        assert!(matches!(r, Response::AuthMessage { auth_message_type: AuthMessageType::Info, .. }));
+        let r = c.request(&Request::PostAuthMessageResponse { response: None }).unwrap();
+        assert!(matches!(r, Response::AuthMessage { auth_message_type: AuthMessageType::Secret, .. }));
+        let r = c.request(&Request::PostAuthMessageResponse { response: Some("wrong".into()) }).unwrap();
+        assert!(matches!(r, Response::Error { error_type: ErrorType::AuthError, .. }));
+        c.request(&Request::CreateSession { username: "ken".into() }).unwrap();
+        c.request(&Request::PostAuthMessageResponse { response: None }).unwrap();
+        assert_eq!(c.request(&Request::PostAuthMessageResponse { response: Some("nyx".into()) }).unwrap(), Response::Success);
+        assert_eq!(c.request(&Request::StartSession { cmd: vec!["Hyprland".into()], env: vec![] }).unwrap(), Response::Success);
         let log = fake.log.lock().unwrap();
         assert_eq!(log.failures, 1);
         assert_eq!(log.started[0].0, "ken");

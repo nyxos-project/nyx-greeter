@@ -51,14 +51,8 @@ pub enum AuthMessageType {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
     Success,
-    Error {
-        error_type: ErrorType,
-        description: String,
-    },
-    AuthMessage {
-        auth_message_type: AuthMessageType,
-        auth_message: String,
-    },
+    Error { error_type: ErrorType, description: String },
+    AuthMessage { auth_message_type: AuthMessageType, auth_message: String },
 }
 
 pub fn write_message<T: Serialize>(stream: &mut impl Write, msg: &T) -> std::io::Result<()> {
@@ -91,13 +85,9 @@ impl Client {
             Some(p) => p.to_path_buf(),
             None => std::env::var_os("GREETD_SOCK")
                 .map(Into::into)
-                .ok_or_else(|| {
-                    std::io::Error::other("GREETD_SOCK isn't set (is greetd running this greeter?)")
-                })?,
+                .ok_or_else(|| std::io::Error::other("GREETD_SOCK isn't set (is greetd running this greeter?)"))?,
         };
-        Ok(Client {
-            stream: UnixStream::connect(path)?,
-        })
+        Ok(Client { stream: UnixStream::connect(path)? })
     }
 
     pub fn request(&mut self, req: &Request) -> std::io::Result<Response> {
@@ -113,50 +103,16 @@ mod tests {
     #[test]
     fn wire_format_matches_greetd() {
         let mut buf = vec![];
-        write_message(
-            &mut buf,
-            &Request::CreateSession {
-                username: "ken".into(),
-            },
-        )
-        .unwrap();
+        write_message(&mut buf, &Request::CreateSession { username: "ken".into() }).unwrap();
         let len = u32::from_ne_bytes(buf[..4].try_into().unwrap()) as usize;
-        assert_eq!(
-            std::str::from_utf8(&buf[4..4 + len]).unwrap(),
-            r#"{"type":"create_session","username":"ken"}"#
-        );
+        assert_eq!(std::str::from_utf8(&buf[4..4 + len]).unwrap(), r#"{"type":"create_session","username":"ken"}"#);
         let mut buf = vec![];
-        write_message(
-            &mut buf,
-            &Request::PostAuthMessageResponse { response: None },
-        )
-        .unwrap();
-        assert!(
-            std::str::from_utf8(&buf[4..])
-                .unwrap()
-                .ends_with(r#""post_auth_message_response"}"#)
-        );
-        let r: Response = serde_json::from_str(
-            r#"{"type":"auth_message","auth_message_type":"secret","auth_message":"Password: "}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            r,
-            Response::AuthMessage {
-                auth_message_type: AuthMessageType::Secret,
-                auth_message: "Password: ".into()
-            }
-        );
-        let r: Response = serde_json::from_str(
-            r#"{"type":"error","error_type":"auth_error","description":"nope"}"#,
-        )
-        .unwrap();
-        assert!(matches!(
-            r,
-            Response::Error {
-                error_type: ErrorType::AuthError,
-                ..
-            }
-        ));
+        write_message(&mut buf, &Request::PostAuthMessageResponse { response: None }).unwrap();
+        assert!(std::str::from_utf8(&buf[4..]).unwrap().ends_with(r#""post_auth_message_response"}"#));
+        let r: Response =
+            serde_json::from_str(r#"{"type":"auth_message","auth_message_type":"secret","auth_message":"Password: "}"#).unwrap();
+        assert_eq!(r, Response::AuthMessage { auth_message_type: AuthMessageType::Secret, auth_message: "Password: ".into() });
+        let r: Response = serde_json::from_str(r#"{"type":"error","error_type":"auth_error","description":"nope"}"#).unwrap();
+        assert!(matches!(r, Response::Error { error_type: ErrorType::AuthError, .. }));
     }
 }

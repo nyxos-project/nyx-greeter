@@ -59,10 +59,7 @@ fn friendly(desc: &str) -> String {
 }
 
 /// Start the flow. `socket` overrides `$GREETD_SOCK`.
-pub fn spawn(
-    socket: Option<PathBuf>,
-    events: impl Fn(Event) + Send + 'static,
-) -> mpsc::Sender<Command> {
+pub fn spawn(socket: Option<PathBuf>, events: impl Fn(Event) + Send + 'static) -> mpsc::Sender<Command> {
     let (tx, rx) = mpsc::channel::<Command>();
     std::thread::Builder::new()
         .name("greetd".into())
@@ -76,37 +73,25 @@ pub fn spawn(
             };
             let mut active = false;
             // Hand greetd's reply to the UI, answering what needs no answer.
-            let handle = |client: &mut Client,
-                          mut reply: std::io::Result<Response>,
-                          active: &mut bool| loop {
+            let handle = |client: &mut Client, mut reply: std::io::Result<Response>, active: &mut bool| loop {
                 match reply {
-                    Ok(Response::AuthMessage {
-                        auth_message_type,
-                        auth_message,
-                    }) => {
+                    Ok(Response::AuthMessage { auth_message_type, auth_message }) => {
                         let text = auth_message.trim().trim_end_matches(':').trim().to_string();
                         match auth_message_type {
                             AuthMessageType::Secret | AuthMessageType::Visible => {
-                                events(Event::Prompt {
-                                    text,
-                                    secret: auth_message_type == AuthMessageType::Secret,
-                                });
+                                events(Event::Prompt { text, secret: auth_message_type == AuthMessageType::Secret });
                                 return;
                             }
                             AuthMessageType::Info => events(Event::Info(text)),
                             AuthMessageType::Error => events(Event::Notice(text)),
                         }
-                        reply =
-                            client.request(&Request::PostAuthMessageResponse { response: None });
+                        reply = client.request(&Request::PostAuthMessageResponse { response: None });
                     }
                     Ok(Response::Success) => {
                         events(Event::Authenticated);
                         return;
                     }
-                    Ok(Response::Error {
-                        error_type,
-                        description,
-                    }) => {
+                    Ok(Response::Error { error_type, description }) => {
                         let _ = client.request(&Request::CancelSession);
                         *active = false;
                         events(match error_type {
@@ -132,21 +117,15 @@ pub fn spawn(
                         handle(&mut client, r, &mut active);
                     }
                     Command::Answer(text) => {
-                        let r = client.request(&Request::PostAuthMessageResponse {
-                            response: Some(text),
-                        });
+                        let r = client.request(&Request::PostAuthMessageResponse { response: Some(text) });
                         handle(&mut client, r, &mut active);
                     }
-                    Command::Start { cmd, env } => {
-                        match client.request(&Request::StartSession { cmd, env }) {
-                            Ok(Response::Success) => events(Event::Started),
-                            Ok(Response::Error { description, .. }) => {
-                                events(Event::Failed(description))
-                            }
-                            Ok(_) => events(Event::Broken("greetd answered oddly".into())),
-                            Err(e) => events(Event::Broken(format!("Lost greetd: {e}"))),
-                        }
-                    }
+                    Command::Start { cmd, env } => match client.request(&Request::StartSession { cmd, env }) {
+                        Ok(Response::Success) => events(Event::Started),
+                        Ok(Response::Error { description, .. }) => events(Event::Failed(description)),
+                        Ok(_) => events(Event::Broken("greetd answered oddly".into())),
+                        Err(e) => events(Event::Broken(format!("Lost greetd: {e}"))),
+                    },
                     Command::Cancel => {
                         if active {
                             let _ = client.request(&Request::CancelSession);
@@ -181,45 +160,22 @@ mod tests {
     #[test]
     fn fingerprint_then_password_then_start() {
         let t = tempfile::tempdir().unwrap();
-        let f = fake::serve(
-            &t.path().join("g.sock"),
-            fake::Rules {
-                fingerprint: true,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let f = fake::serve(&t.path().join("g.sock"), fake::Rules { fingerprint: true, ..Default::default() }).unwrap();
         let (etx, erx) = mpsc::channel();
         let tx = spawn(Some(f.path.clone()), move |e| {
             let _ = etx.send(e);
         });
         tx.send(Command::Login("ken".into())).unwrap();
-        assert_eq!(
-            next(&erx),
-            Event::Info("Place your finger on the reader".into())
-        );
-        assert_eq!(
-            next(&erx),
-            Event::Prompt {
-                text: "Password".into(),
-                secret: true
-            }
-        );
+        assert_eq!(next(&erx), Event::Info("Place your finger on the reader".into()));
+        assert_eq!(next(&erx), Event::Prompt { text: "Password".into(), secret: true });
         tx.send(Command::Answer("bad".into())).unwrap();
-        assert_eq!(
-            next(&erx),
-            Event::Failed("That password didn't work. Try again.".into())
-        );
+        assert_eq!(next(&erx), Event::Failed("That password didn't work. Try again.".into()));
         tx.send(Command::Login("ken".into())).unwrap();
         next(&erx);
         next(&erx);
         tx.send(Command::Answer("nyx".into())).unwrap();
         assert_eq!(next(&erx), Event::Authenticated);
-        tx.send(Command::Start {
-            cmd: vec!["Hyprland".into()],
-            env: vec![],
-        })
-        .unwrap();
+        tx.send(Command::Start { cmd: vec!["Hyprland".into()], env: vec![] }).unwrap();
         assert_eq!(next(&erx), Event::Started);
         assert_eq!(f.log.lock().unwrap().started.len(), 1);
     }
