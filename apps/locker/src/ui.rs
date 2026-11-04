@@ -18,6 +18,10 @@ static THEME: OnceLock<String> = OnceLock::new();
 /// A fingerprint that doesn't match is tried again this many times, then the password.
 const FINGER_TRIES: u32 = 5;
 
+/// After a face scan, the next waits this long, so moving the pointer doesn't keep the
+/// camera on.
+const FACE_REST: Duration = Duration::from_secs(10);
+
 /// What the lock screen looks like: the lock-screen theme, its wallpaper and the style.
 #[derive(Debug, Clone)]
 pub struct Look {
@@ -114,6 +118,8 @@ struct Locker {
     running: RefCell<HashMap<Method, Sender<String>>>,
     events: async_channel::Sender<Event>,
     finger_tries: Cell<u32>,
+    /// When the next face scan may start (monotonic µs).
+    face_after: Cell<i64>,
     unlocking: Cell<bool>,
     lock: RefCell<Option<gtk4_session_lock::Instance>>,
     code: Rc<Cell<u8>>,
@@ -143,6 +149,7 @@ pub fn start(app: &gtk::Application, look: Look, opts: Options, code: Rc<Cell<u8
         running: RefCell::default(),
         events: tx,
         finger_tries: Cell::new(0),
+        face_after: Cell::new(0),
         unlocking: Cell::new(false),
         lock: RefCell::default(),
         code,
@@ -361,7 +368,10 @@ fn run(l: &Rc<Locker>, m: Method) {
 }
 
 fn wake(l: &Rc<Locker>) {
-    if l.methods.contains(&Method::Face) && !l.running.borrow().contains_key(&Method::Face) {
+    if l.methods.contains(&Method::Face)
+        && !l.running.borrow().contains_key(&Method::Face)
+        && glib::monotonic_time() >= l.face_after.get()
+    {
         run(l, Method::Face);
     }
 }
@@ -439,7 +449,10 @@ fn on_event(l: &Rc<Locker>, e: Event) {
                         indicate(l, Kind::Fingerprint, Phase::Timeout, "Use your password");
                     }
                 }
-                Method::Face => indicate(l, Kind::Face, Phase::Failure, &text),
+                Method::Face => {
+                    l.face_after.set(glib::monotonic_time() + FACE_REST.as_micros() as i64);
+                    indicate(l, Kind::Face, Phase::Failure, &text);
+                }
                 Method::Key => again(l, Method::Key, 2000),
             }
         }
@@ -452,7 +465,9 @@ fn on_event(l: &Rc<Locker>, e: Event) {
                     set_status(l, &text, true);
                     again(l, Method::Password, 2000);
                 }
-                _ => {}
+                // No camera or reader now: not tried again until the next lock.
+                Method::Face => l.face_after.set(i64::MAX),
+                Method::Fingerprint => {}
             }
         }
     }
