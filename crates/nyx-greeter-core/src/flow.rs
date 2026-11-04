@@ -40,14 +40,19 @@ pub enum Event {
     Broken(String),
 }
 
+/// greetd's errors in words: it says what PAM said, as text (the fake greetd) or as
+/// PAM's error names (`pam_authenticate: AUTH_ERR`).
 fn friendly(desc: &str) -> String {
     let d = desc.to_lowercase();
-    if d.contains("authentication failure") || d.contains("auth") && d.contains("fail") {
-        "That password didn't work. Try again.".into()
-    } else if d.contains("locked") || d.contains("maximum") {
+    if d.contains("maxtries") || d.contains("locked") || d.contains("maximum") {
         "Too many tries. Wait a moment, then try again.".into()
-    } else if d.contains("expired") {
+    } else if d.contains("expired") || d.contains("new_authtok_reqd") {
         "This password has expired.".into()
+    } else if d.contains("authentication failure")
+        || d.contains("auth") && d.contains("fail")
+        || ["auth_err", "perm_denied", "user_unknown", "cred_err", "cred_insufficient"].iter().any(|e| d.contains(e))
+    {
+        "That password didn't work. Try again.".into()
     } else {
         desc.trim().to_string()
     }
@@ -158,6 +163,14 @@ pub fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pam_error_names_read_as_words() {
+        assert_eq!(friendly("pam_authenticate: AUTH_ERR"), "That password didn't work. Try again.");
+        assert_eq!(friendly("pam_authenticate: MAXTRIES"), "Too many tries. Wait a moment, then try again.");
+        assert_eq!(friendly("pam_acct_mgmt: ACCT_EXPIRED"), "This password has expired.");
+        assert_eq!(friendly("Authentication failure"), "That password didn't work. Try again.");
+    }
     use nyx_greetd::fake;
     use std::time::Duration;
 
