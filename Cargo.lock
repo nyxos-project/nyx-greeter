@@ -31,6 +31,9 @@ name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "cairo-rs"
@@ -487,6 +490,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "gtk4-session-lock"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26659c1334b67c91fc270ebb5ccfb6f20c92b169164b967bcf9f62d79d1f033f"
+dependencies = [
+ "gdk4",
+ "glib",
+ "glib-sys",
+ "gtk4",
+ "gtk4-session-lock-sys",
+ "libc",
+]
+
+[[package]]
+name = "gtk4-session-lock-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51b694670ce8c85cfdafeaec6faf1567bf6abe661be147ba9dab0059564522ba"
+dependencies = [
+ "gdk4-sys",
+ "glib-sys",
+ "gobject-sys",
+ "gtk4-sys",
+ "libc",
+ "system-deps 8.0.0",
+]
+
+[[package]]
 name = "gtk4-sys"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -615,6 +646,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "nyx-lock-core"
+version = "0.1.0"
+dependencies = [
+ "pam-client2",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "nyx-locker"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "gtk4",
+ "gtk4-session-lock",
+ "nyx-lock-core",
+ "nyx-signin-ui",
+ "nyx-theme",
+ "toml",
+]
+
+[[package]]
+name = "nyx-signin-ui"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
+]
+
+[[package]]
 name = "nyx-theme"
 version = "0.1.0"
 source = "git+https://github.com/design-nexus/nyx-design.git?rev=976fed940841a2a505ffe644f632cb60e12988a8#976fed940841a2a505ffe644f632cb60e12988a8"
@@ -630,6 +690,27 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "pam-client2"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "407daa00f98b05147dbbaa6d2f6bce574e76794fa4952a5b38764681a23dde5f"
+dependencies = [
+ "bitflags",
+ "libc",
+ "pam-sys2",
+ "rustversion",
+]
+
+[[package]]
+name = "pam-sys2"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63e07ea89c210813e1a48fc32cb358ba693aae8ca70163461e22d11f1884bf1d"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "pango"
@@ -726,6 +807,12 @@ dependencies = [
  "linux-raw-sys",
  "windows-sys",
 ]
+
+[[package]]
+name = "rustversion"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "semver"

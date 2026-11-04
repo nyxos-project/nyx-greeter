@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/nyx-greetd", "crates/nyx-greeter-core", "apps/greeter"]
+members = ["crates/nyx-greetd", "crates/nyx-greeter-core", "crates/nyx-signin-ui", "crates/nyx-lock-core", "apps/greeter", "apps/locker"]
 
 [workspace.package]
 edition = "2024"
@@ -12,6 +12,7 @@ repository = "https://github.com/nyxos-project/nyx-greeter"
 async-channel = "2"
 gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
 gtk4-layer-shell = "0.8"
+gtk4-session-lock = { version = "0.4.1", features = ["v1_2"] }
 nyx-theme = { git = "https://github.com/design-nexus/nyx-design.git", rev = "976fed940841a2a505ffe644f632cb60e12988a8" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

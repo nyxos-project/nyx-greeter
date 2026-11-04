@@ -1,0 +1,11 @@
+[package]
+name = "nyx-signin-ui"
+description = "The sign-in pieces Nyx Greeter and Nyx Locker share: the indicator in its four styles, avatars"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+gtk.workspace = true

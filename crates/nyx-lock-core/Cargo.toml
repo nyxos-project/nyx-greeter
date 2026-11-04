@@ -1,0 +1,13 @@
+[package]
+name = "nyx-lock-core"
+description = "Nyx Locker's authentication without GTK: one PAM conversation per method, at once"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+pam-client2 = { version = "0.5.5", default-features = false }
+serde.workspace = true
+toml.workspace = true
