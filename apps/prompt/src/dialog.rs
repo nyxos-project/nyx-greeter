@@ -408,9 +408,10 @@ mod tests {
     #[test]
     fn polkits_message_reads_as_a_title() {
         assert_eq!(
-            title("authentication is required to apply system changes."),
-            "Authentication is required to apply system changes"
+            title("Authentication is required to apply system changes: settings, software or services."),
+            ("Apply system changes".to_string(), "Settings, software or services".to_string())
         );
-        assert_eq!(title(""), "An administrator's password is needed");
+        assert_eq!(title("Install Steam"), ("Install Steam".to_string(), String::new()));
+        assert_eq!(title("").0, "An administrator's password is needed");
     }
 }
