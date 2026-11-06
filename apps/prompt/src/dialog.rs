@@ -73,13 +73,23 @@ fn home_of(user: &str) -> std::path::PathBuf {
         .unwrap_or_default()
 }
 
-/// Polkit's message, without the trailing full stop and with a capital first letter.
-fn title(message: &str) -> String {
-    let m = message.trim().trim_end_matches('.');
-    let mut c = m.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => "An administrator's password is needed".into(),
+/// Polkit's message as a title and the rest of it: without "Authentication is required
+/// to" (the card says that already), split at its first colon, capitalised.
+fn title(message: &str) -> (String, String) {
+    let mut m = message.trim().trim_end_matches('.');
+    for lead in ["Authentication is required to ", "Authentication is needed to "] {
+        if m.len() > lead.len() && m[..lead.len()].eq_ignore_ascii_case(lead) {
+            m = &m[lead.len()..];
+        }
+    }
+    let (head, rest) = m.split_once(": ").unwrap_or((m, ""));
+    let cap = |s: &str| {
+        let mut c = s.chars();
+        c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+    };
+    match cap(head) {
+        h if h.is_empty() => ("An administrator's password is needed".into(), String::new()),
+        h => (h, cap(rest)),
     }
 }
 
@@ -243,12 +253,21 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
     avatar.add_css_class("avatar");
     card.append(&avatar);
 
-    let heading = gtk::Label::new(Some(&title(&req.message)));
+    let (head, more) = title(&req.message);
+    let heading = gtk::Label::new(Some(&head));
     heading.add_css_class("title");
     heading.set_wrap(true);
     heading.set_justify(gtk::Justification::Center);
     heading.set_max_width_chars(34);
     card.append(&heading);
+    if !more.is_empty() {
+        let l = gtk::Label::new(Some(&more));
+        l.add_css_class("subtitle");
+        l.set_wrap(true);
+        l.set_justify(gtk::Justification::Center);
+        l.set_max_width_chars(42);
+        card.append(&l);
+    }
 
     let account: gtk::Widget = if req.users.len() > 1 {
         let who = gtk::Label::new(Some("An administrator's password"));
