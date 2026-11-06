@@ -138,7 +138,7 @@ fn converse(d: &Rc<Dialog>) {
                     let hint = text.trim().trim_end_matches(':');
                     d.entry.set_property("placeholder-text", if hint.is_empty() { "Password" } else { hint });
                     d.entry.set_sensitive(true);
-                    d.ok.set_sensitive(true);
+                    d.ok.set_sensitive(!d.entry.text().is_empty());
                     d.entry.grab_focus();
                 }
                 Line::Info(text) => set_status(&d, &text, false),
