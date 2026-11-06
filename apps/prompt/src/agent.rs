@@ -168,9 +168,7 @@ pub fn register(app: &gtk::Application) -> Result<(), String> {
     details.insert("session-id".into(), session.to_variant());
     let subject = ("unix-session", details);
     let locale = std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into());
-    let path = glib::variant::ObjectPath::try_from(PATH.to_string()).map_err(|e| e.to_string())?;
-    // `((sa{sv})so)`: the agent's path goes as an object path.
-    let args = glib::Variant::tuple_from_iter([subject.to_variant(), locale.to_variant(), path.to_variant()]);
+    let args = (subject, locale, PATH).to_variant();
     call(
         &bus,
         "org.freedesktop.PolicyKit1",
