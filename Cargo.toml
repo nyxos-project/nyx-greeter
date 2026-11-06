@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/nyx-greetd", "crates/nyx-greeter-core", "crates/nyx-signin-ui", "crates/nyx-lock-core", "apps/greeter", "apps/locker"]
+members = ["crates/nyx-greetd", "crates/nyx-greeter-core", "crates/nyx-signin-ui", "crates/nyx-lock-core", "apps/greeter", "apps/locker", "apps/prompt"]
 
 [workspace.package]
 edition = "2024"

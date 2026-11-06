@@ -1,0 +1,101 @@
+/* Nyx Administrator Prompt: one quiet card over a dimmed screen. */
+
+window.nyx-prompt {
+  background: transparent;
+  color: @theme_text;
+}
+
+.backdrop {
+  background-color: alpha(black, 0.5);
+}
+
+.card {
+  background-color: @theme_card;
+  border: 1px solid @hairline;
+  border-radius: 16px;
+  padding: 28px 28px 20px;
+  box-shadow: 0 16px 48px alpha(black, 0.5);
+}
+
+.avatar {
+  margin-bottom: 14px;
+}
+
+.initials {
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 999px;
+  background-color: @theme_accent;
+  color: @theme_on_accent;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.avatar-image {
+  border-radius: 999px;
+}
+
+.title {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.who {
+  color: @theme_dim_text;
+  font-size: 0.92em;
+}
+
+label.account {
+  margin-bottom: 14px;
+}
+
+dropdown.account {
+  margin: 4px 0 14px;
+}
+
+entry.password {
+  min-height: 40px;
+  border-radius: 10px;
+}
+
+.status {
+  font-size: 0.92em;
+  color: @theme_dim_text;
+  min-height: 1.4em;
+  margin: 8px 0 6px;
+}
+
+.status.error {
+  color: @theme_danger;
+}
+
+.buttons button {
+  min-height: 36px;
+  border-radius: 10px;
+}
+
+.details {
+  margin-top: 14px;
+  color: @theme_dim_text;
+  font-size: 0.9em;
+}
+
+.detail-text {
+  font-family: monospace;
+  font-size: 0.9em;
+  margin-top: 6px;
+}
+
+.shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+@keyframes shake {
+  0% { margin-left: 0; margin-right: 0; }
+  20% { margin-left: 18px; margin-right: 0; }
+  40% { margin-left: 0; margin-right: 18px; }
+  60% { margin-left: 12px; margin-right: 0; }
+  80% { margin-left: 0; margin-right: 6px; }
+  100% { margin-left: 0; margin-right: 0; }
+}

@@ -162,6 +162,7 @@ pub fn start(app: &gtk::Application, look: Look, opts: Options, code: Rc<Cell<u8
         begin(&l);
     } else {
         lock(&l);
+        watch_logind(&l);
     }
     tick(&l);
     let wl = Rc::downgrade(&l);
@@ -173,6 +174,47 @@ pub fn start(app: &gtk::Application, look: Look, opts: Options, code: Rc<Cell<u8
         None => glib::ControlFlow::Break,
     });
     std::mem::forget(l);
+}
+
+/// `loginctl unlock-session` (logind's `Unlock` on one of this user's sessions) unlocks,
+/// as with other lock screens. Only root or the session's owner can send it.
+fn watch_logind(l: &Rc<Locker>) {
+    use gtk::gio;
+    let Ok(bus) = gio::bus_get_sync(gio::BusType::System, gio::Cancellable::NONE) else { return };
+    let Ok(uid) = std::fs::metadata("/proc/self").map(|m| std::os::unix::fs::MetadataExt::uid(&m)) else { return };
+    let wl = Rc::downgrade(l);
+    let sub = bus.subscribe_to_signal(
+        Some("org.freedesktop.login1"),
+        Some("org.freedesktop.login1.Session"),
+        Some("Unlock"),
+        None,
+        None,
+        gio::DBusSignalFlags::NONE,
+        move |signal| {
+            let owner = signal
+                .connection
+                .call_sync(
+                    Some("org.freedesktop.login1"),
+                    signal.object_path,
+                    "org.freedesktop.DBus.Properties",
+                    "Get",
+                    Some(&("org.freedesktop.login1.Session", "User").to_variant()),
+                    None,
+                    gio::DBusCallFlags::NONE,
+                    2000,
+                    gio::Cancellable::NONE,
+                )
+                .ok()
+                .and_then(|reply| reply.child_value(0).as_variant())
+                .and_then(|user| user.child_value(0).get::<u32>());
+            if owner == Some(uid)
+                && let Some(l) = wl.upgrade()
+            {
+                on_event(&l, Event::Granted(Method::Password));
+            }
+        },
+    );
+    std::mem::forget(sub);
 }
 
 fn lock(l: &Rc<Locker>) {
