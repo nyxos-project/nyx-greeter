@@ -111,6 +111,11 @@ pub enum Event {
 pub fn denial(method: Method, code: ErrorCode) -> Event {
     let text = |t: &str| t.to_string();
     match code {
+        // A method's service decided nothing: its gate skipped it (a closed lid, a
+        // remote session).
+        ErrorCode::PERM_DENIED if method != Method::Password => {
+            Event::Unavailable { method, text: format!("{} isn't available", method.name()) }
+        }
         ErrorCode::AUTH_ERR | ErrorCode::USER_UNKNOWN | ErrorCode::PERM_DENIED | ErrorCode::CRED_ERR => Event::Denied {
             method,
             text: match method {
@@ -214,5 +219,8 @@ mod tests {
             matches!(denial(Method::Password, ErrorCode::AUTH_ERR), Event::Denied { text, .. } if text == "That password didn't work")
         );
         assert!(matches!(denial(Method::Face, ErrorCode::AUTHINFO_UNAVAIL), Event::Unavailable { .. }));
+        assert!(matches!(denial(Method::Fingerprint, ErrorCode::PERM_DENIED), Event::Unavailable { .. }));
+        assert!(matches!(denial(Method::Fingerprint, ErrorCode::AUTH_ERR), Event::Denied { .. }));
+        assert!(matches!(denial(Method::Password, ErrorCode::PERM_DENIED), Event::Denied { .. }));
     }
 }
