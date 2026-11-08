@@ -272,15 +272,19 @@ fn power_row(g: &Rc<Greeter>) -> gtk::Box {
     row
 }
 
+/// The logo above the card: the file the configuration names, else the system logo
+/// in the login theme's colours.
 fn mark(g: &Greeter) -> Option<gtk::Image> {
-    let path = g.config.mark.clone().or_else(|| {
-        ["/run/current-system/sw/share/nyx/brand/nyx-mark.png", "/usr/share/nyx/brand/nyx-mark.png"]
-            .iter()
-            .map(std::path::PathBuf::from)
-            .find(|p| p.exists())
-    })?;
-    let t = gdk::Texture::from_filename(path).ok()?;
-    let p = gtk::Image::from_paintable(Some(&t));
+    let p = match &g.config.mark {
+        Some(path) => gtk::Image::from_paintable(Some(&gdk::Texture::from_filename(path).ok()?)),
+        None => {
+            let image = gtk::Image::new();
+            let draw = |image: &gtk::Image| image.set_paintable(nyx_theme::logo_texture(64, image.scale_factor()).as_ref());
+            draw(&image);
+            image.connect_scale_factor_notify(draw);
+            image
+        }
+    };
     p.set_pixel_size(64);
     p.set_halign(gtk::Align::Center);
     p.set_margin_bottom(20);
