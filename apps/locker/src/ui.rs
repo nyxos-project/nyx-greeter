@@ -230,6 +230,7 @@ fn lock(l: &Rc<Locker>) {
     });
     let wl = Rc::downgrade(l);
     inst.connect_locked(move |_| {
+        set_locked_hint(true);
         if let Some(l) = wl.upgrade() {
             begin(&l);
         }
@@ -244,12 +245,55 @@ fn lock(l: &Rc<Locker>) {
     });
     let wl = Rc::downgrade(l);
     inst.connect_unlocked(move |_| {
+        set_locked_hint(false);
         if let Some(l) = wl.upgrade() {
             l.app.quit();
         }
     });
     inst.lock();
     *l.lock.borrow_mut() = Some(inst);
+}
+
+/// logind's `LockedHint` on this user's session, which services that follow the lock
+/// through logind read (Nyx Shell Core). The session lock is what keeps the session
+/// locked; this only reports it, so a failure is logged and nothing else. Locking is
+/// told without waiting; unlocking waits (briefly) so it's told before the locker exits.
+fn set_locked_hint(locked: bool) {
+    use gtk::gio;
+    const SESSION: &str = "/org/freedesktop/login1/session/auto";
+    let Ok(bus) = gio::bus_get_sync(gio::BusType::System, gio::Cancellable::NONE) else { return };
+    let args = (locked,).to_variant();
+    let report = move |e: glib::Error| eprintln!("nyx-locker: couldn't tell logind the session is {}: {e}", if locked { "locked" } else { "unlocked" });
+    if locked {
+        bus.call(
+            Some("org.freedesktop.login1"),
+            SESSION,
+            "org.freedesktop.login1.Session",
+            "SetLockedHint",
+            Some(&args),
+            None,
+            gio::DBusCallFlags::NONE,
+            2000,
+            gio::Cancellable::NONE,
+            move |r| {
+                if let Err(e) = r {
+                    report(e);
+                }
+            },
+        );
+    } else if let Err(e) = bus.call_sync(
+        Some("org.freedesktop.login1"),
+        SESSION,
+        "org.freedesktop.login1.Session",
+        "SetLockedHint",
+        Some(&args),
+        None,
+        gio::DBusCallFlags::NONE,
+        1000,
+        gio::Cancellable::NONE,
+    ) {
+        report(e);
+    }
 }
 
 fn window(l: &Rc<Locker>, demo: bool) -> gtk::Window {
