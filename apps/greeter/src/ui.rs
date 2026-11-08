@@ -23,6 +23,8 @@ pub fn theme(id: &str) {
 
 pub fn install_css() {
     nyx_theme::use_design_2();
+    // Nobody's theme choice (anyone's ~/.config/nyx) changes the system's login theme.
+    nyx_theme::use_fixed_theme(THEME.get().map(String::as_str).unwrap_or("nyx-dark"));
     nyx_theme::install(nyx_theme::Style {
         window_class: "nyx-greeter",
         base_skip: &[],
@@ -35,9 +37,7 @@ pub fn install_css() {
             glow: false,
             reduce_motion: false,
         },
-        // Choosing its own theme keeps a suite theme file (anyone's ~/.config/nyx) from
-        // overriding the system's login theme.
-        set_theme: Some(|_, _| {}),
+        set_theme: None,
     });
 }
 

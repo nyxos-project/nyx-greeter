@@ -12,6 +12,8 @@ use std::sync::mpsc::Sender;
 
 pub fn install_css() {
     nyx_theme::use_design_2();
+    // Part of the desktop: always the system theme.
+    nyx_theme::use_shell_scope();
     nyx_theme::install(nyx_theme::Style {
         window_class: "nyx-prompt",
         base_skip: &[],

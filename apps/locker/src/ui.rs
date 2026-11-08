@@ -62,7 +62,7 @@ impl Look {
         Look {
             theme: appearance("lock-theme")
                 .or_else(|| nyx_theme::read_suite().map(|s| s.theme))
-                .unwrap_or_else(|| "nyx-dark".into()),
+                .unwrap_or_else(|| nyx_theme::DEFAULT_THEME.into()),
             style: style.or_else(|| appearance("lock-style").as_deref().and_then(Style::parse)).unwrap_or_default(),
             wallpaper: themed_wallpaper(),
         }
@@ -75,6 +75,8 @@ pub fn theme(id: &str) {
 
 pub fn install_css() {
     nyx_theme::use_design_2();
+    // The lock-screen theme is its own; a system theme change doesn't restyle it.
+    nyx_theme::use_fixed_theme(THEME.get().map(String::as_str).unwrap_or(nyx_theme::DEFAULT_THEME));
     nyx_theme::install(nyx_theme::Style {
         window_class: "nyx-locker",
         base_skip: &[],
@@ -87,8 +89,7 @@ pub fn install_css() {
             glow: false,
             reduce_motion: false,
         },
-        // The lock-screen theme is its own; a suite theme change doesn't restyle it.
-        set_theme: Some(|_, _| {}),
+        set_theme: None,
     });
 }
 
