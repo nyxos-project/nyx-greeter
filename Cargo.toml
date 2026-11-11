@@ -13,7 +13,7 @@ async-channel = "2"
 gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
 gtk4-layer-shell = "0.8"
 gtk4-session-lock = { version = "0.4.1", features = ["v1_2"] }
-nyx-theme = { git = "https://github.com/design-nexus/nyx-design.git", rev = "40db521bab468d54f18f65c6aabd7fc8533d6a4d" }
+nyx-theme = { git = "https://github.com/design-nexus/nyx-design.git", rev = "553f65567057150af4929033896531879528bbf4" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
