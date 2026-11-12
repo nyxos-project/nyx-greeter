@@ -1,4 +1,5 @@
-//! The screens: the wallpaper on every monitor, the login card on the largest.
+//! The screens: the wallpaper and clock on every monitor, the sign-in card on the largest.
+//! The clock and card are one group in the middle, as on the lock screen.
 
 use crate::Options;
 use gtk::prelude::*;
@@ -15,6 +16,14 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 static THEME: OnceLock<String> = OnceLock::new();
+
+/// The indicator on the card.
+const RING: i32 = 96;
+
+/// From signing in to the session: the match shows, then the clock and card fade
+/// (style.css). The session starts at once; the greeter leaves after this.
+const FADE_AFTER: Duration = Duration::from_millis(250);
+const LEAVE_AFTER: Duration = Duration::from_millis(600);
 
 /// The login theme is a system setting, not anyone's desktop choice.
 pub fn theme(id: &str) {
@@ -42,16 +51,22 @@ pub fn install_css() {
 }
 
 struct Card {
-    avatar: gtk::Overlay,
     name: gtk::Label,
     entry: gtk::Entry,
+    /// The entry and its hint: shown while PAM asks for a password, hidden while it waits
+    /// on a fingerprint, a face or a key.
+    password: gtk::Box,
     status: gtk::Label,
-    spinner: gtk::Spinner,
-    /// Shown once PAM asks for a fingerprint, a face or a key.
     indicator: Rc<Indicator>,
     sessions: gtk::DropDown,
     users_button: gtk::MenuButton,
-    root: gtk::Box,
+    card: gtk::Box,
+    group: gtk::Box,
+    /// Above the clock and under the card: what keeps the clock where it is as the card
+    /// grows past, or shrinks below, its height with the password showing (`full`).
+    counter: gtk::Box,
+    foot: gtk::Box,
+    full: Cell<i32>,
 }
 
 struct Greeter {
@@ -66,6 +81,10 @@ struct Greeter {
     card: RefCell<Option<Rc<Card>>>,
     clocks: RefCell<Vec<(gtk::Label, gtk::Label)>>,
     typed_once: Cell<bool>,
+    /// Reduce motion: the indicator stays still and nothing fades.
+    still: bool,
+    /// When signing in succeeded (monotonic µs), so the fade has its time before leaving.
+    signed_in: Cell<Option<i64>>,
     _fake: RefCell<Option<nyx_greetd::fake::Fake>>,
 }
 
@@ -119,6 +138,8 @@ pub fn start(app: &gtk::Application, config: Config, opts: Options) {
         card: RefCell::default(),
         clocks: RefCell::default(),
         typed_once: Cell::new(false),
+        still: nyx_theme::A11y::system().reduce_motion,
+        signed_in: Cell::new(None),
         _fake: RefCell::new(fake),
     });
     build_windows(&g);
@@ -193,44 +214,50 @@ fn build_windows(g: &Rc<Greeter>) {
             bg.set_paintable(Some(&t));
         }
         overlay.set_child(Some(&bg));
-        let dim = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        dim.add_css_class("dim");
-        let provider = gtk::CssProvider::new();
-        provider.load_from_string(&format!(".dim {{ background-color: alpha(black, {:.2}); }}", g.config.dim.clamp(0.0, 0.95)));
-        gtk::style_context_add_provider_for_display(
-            &WidgetExt::display(&w),
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
-        );
-        overlay.add_overlay(&dim);
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        if g.config.dim > 0.0 {
+            let dim = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            dim.add_css_class("dim");
+            let provider = gtk::CssProvider::new();
+            provider.load_from_string(&format!(".dim {{ background-color: alpha(black, {:.2}); }}", g.config.dim.clamp(0.0, 0.95)));
+            gtk::style_context_add_provider_for_display(
+                &WidgetExt::display(&w),
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+            );
+            overlay.add_overlay(&dim);
+        }
+
+        // The clock and the card: one group in the middle of the screen.
+        let group = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        group.add_css_class("greeter-group");
+        group.set_halign(gtk::Align::Center);
+        group.set_valign(gtk::Align::Center);
+        let counter = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        group.append(&counter);
         if g.config.clock {
             let time = gtk::Label::new(None);
             time.add_css_class("clock");
             let date = gtk::Label::new(None);
             date.add_css_class("date");
             let c = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            c.set_margin_top(72);
+            if is_main {
+                c.set_margin_bottom(40);
+            }
             c.append(&time);
             c.append(&date);
-            content.append(&c);
+            group.append(&c);
             g.clocks.borrow_mut().push((time, date));
         }
-        let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        spacer.set_vexpand(true);
-        content.append(&spacer);
         if is_main {
-            let card = build_card(g);
-            content.append(&card.root);
+            let card = build_card(g, &group, &counter);
+            group.append(&card.card);
+            group.append(&card.foot);
             *g.card.borrow_mut() = Some(card);
         }
-        let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        spacer.set_vexpand(true);
-        content.append(&spacer);
+        overlay.add_overlay(&group);
         if is_main && g.config.power {
-            content.append(&power_row(g));
+            overlay.add_overlay(&power_row(g));
         }
-        overlay.add_overlay(&content);
         if is_main && let Some(c) = g.card.borrow().as_ref() {
             overlay.add_overlay(c.indicator.glow());
         }
@@ -251,6 +278,7 @@ fn icon_button(icon: &str, label: &str) -> gtk::Button {
 fn power_row(g: &Rc<Greeter>) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     row.set_halign(gtk::Align::End);
+    row.set_valign(gtk::Align::End);
     row.set_margin_end(28);
     row.set_margin_bottom(24);
     for (icon, label, verb) in [
@@ -272,64 +300,56 @@ fn power_row(g: &Rc<Greeter>) -> gtk::Box {
     row
 }
 
-/// The logo above the card: the file the configuration names, else the system logo
-/// in the login theme's colours.
-fn mark(g: &Greeter) -> Option<gtk::Image> {
-    let p = match &g.config.mark {
-        Some(path) => gtk::Image::from_paintable(Some(&gdk::Texture::from_filename(path).ok()?)),
-        None => {
-            let image = gtk::Image::new();
-            let draw = |image: &gtk::Image| image.set_paintable(nyx_theme::logo_texture(64, image.scale_factor()).as_ref());
-            draw(&image);
-            image.connect_scale_factor_notify(draw);
-            image
-        }
-    };
-    p.set_pixel_size(64);
-    p.set_halign(gtk::Align::Center);
-    p.set_margin_bottom(20);
-    Some(p)
-}
-
-fn build_card(g: &Rc<Greeter>) -> Rc<Card> {
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    root.set_halign(gtk::Align::Center);
-    if let Some(m) = mark(g) {
-        root.append(&m);
-    }
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 12);
+/// The card: the ring, the name, what's happening, the password, and the other users
+/// and sessions.
+fn build_card(g: &Rc<Greeter>, group: &gtk::Box, counter: &gtk::Box) -> Rc<Card> {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 10);
     card.add_css_class("card");
+    card.set_halign(gtk::Align::Center);
     card.set_size_request(360, -1);
-    let avatar = gtk::Overlay::new();
-    avatar.add_css_class("avatar");
-    avatar.set_halign(gtk::Align::Center);
-    avatar.set_size_request(88, 88);
+    let style = Style::parse(&g.config.style).unwrap_or_default();
+    let indicator = Indicator::new(style, Colours::of_theme(&g.config.theme));
+    if matches!(style, Style::Circular | Style::Cyberpunk) {
+        indicator.set_size(RING);
+    }
+    indicator.set_still(g.still);
+    indicator.set(Kind::Password, Phase::Idle, "");
+    let (ring, caption) = indicator.detach();
     let name = gtk::Label::new(None);
     name.add_css_class("name");
+    name.set_margin_top(6);
+    let status = gtk::Label::new(None);
+    status.add_css_class("status");
+    status.set_wrap(true);
+    status.set_justify(gtk::Justification::Center);
+    status.set_max_width_chars(36);
+    status.set_visible(false);
+    // One line is always kept for the words, so the card doesn't jump as they come and go.
+    let words = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    words.set_size_request(-1, 20);
+    words.append(&caption);
+    words.append(&status);
+
     let entry = gtk::Entry::new();
     entry.set_visibility(false);
     entry.set_input_purpose(gtk::InputPurpose::Password);
     entry.set_placeholder_text(Some("Password"));
     entry.add_css_class("password");
     entry.set_sensitive(false);
-    let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    status_row.set_halign(gtk::Align::Center);
-    let spinner = gtk::Spinner::new();
-    spinner.set_visible(false);
-    let status = gtk::Label::new(None);
-    status.add_css_class("status");
-    status.set_wrap(true);
-    status.set_justify(gtk::Justification::Center);
-    status.set_max_width_chars(36);
-    status_row.append(&spinner);
-    status_row.append(&status);
+    let hint = gtk::Label::new(Some("Press Enter to sign in"));
+    hint.add_css_class("hint");
+    let password = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    password.set_margin_top(4);
+    password.append(&entry);
+    password.append(&hint);
+
     let names: Vec<&str> = g.sessions.iter().map(|s| s.name.as_str()).collect();
     let sessions = gtk::DropDown::from_strings(&names);
     sessions.set_tooltip_text(Some("Session"));
     sessions.update_property(&[gtk::accessible::Property::Label("Session")]);
     sessions.set_visible(g.sessions.len() > 1);
     let users_button = gtk::MenuButton::new();
-    users_button.set_icon_name("avatar-default-symbolic");
+    users_button.set_label("Switch user");
     users_button.set_tooltip_text(Some("Other users"));
     users_button.update_property(&[gtk::accessible::Property::Label("Other users")]);
     users_button.add_css_class("flat");
@@ -366,37 +386,29 @@ fn build_card(g: &Rc<Greeter>) -> Rc<Card> {
     pop.set_child(Some(&list));
     pop.add_css_class("users");
     users_button.set_popover(Some(&pop));
-    let bottom = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    bottom.set_halign(gtk::Align::Center);
-    bottom.append(&sessions);
-    bottom.append(&users_button);
-    let style = Style::parse(&g.config.style).unwrap_or_default();
-    let indicator = Indicator::new(style, Colours::of_theme(&g.config.theme));
-    indicator.widget().set_visible(false);
-    card.append(&avatar);
+    let choices = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    choices.add_css_class("greeter-choices");
+    choices.set_halign(gtk::Align::Center);
+    choices.append(&users_button);
+    choices.append(&sessions);
+    choices.set_visible(users_button.is_visible() || sessions.is_visible());
+
+    card.append(&ring);
     card.append(&name);
-    if style != Style::Edge {
-        card.append(indicator.widget());
-    }
-    card.append(&entry);
-    card.append(&status_row);
-    if style == Style::Edge {
-        card.append(indicator.widget());
-    }
-    card.append(&bottom);
-    root.append(&card);
+    card.append(&words);
+    card.append(&password);
+    card.append(&choices);
+    let foot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
     let wg = Rc::downgrade(g);
     entry.connect_activate(move |e| {
         let Some(g) = wg.upgrade() else { return };
         let text = e.text().to_string();
         e.set_sensitive(false);
-        match g.card.borrow().as_ref() {
-            Some(c) if c.indicator.widget().is_visible() => {
-                set_status(&g, "", false, false);
-                c.indicator.set(Kind::Password, Phase::Scanning, "");
-            }
-            _ => set_status(&g, "Checking…", false, true),
+        if let Some(c) = g.card.borrow().as_ref() {
+            c.indicator.set(Kind::Password, Phase::Scanning, "");
         }
+        set_status(&g, "", false);
         let _ = g.tx.send(Command::Answer(text));
     });
     let keys = gtk::EventControllerKey::new();
@@ -411,8 +423,40 @@ fn build_card(g: &Rc<Greeter>) -> Rc<Card> {
         }
         glib::Propagation::Proceed
     });
-    root.add_controller(keys);
-    Rc::new(Card { avatar, name, entry, status, spinner, indicator, sessions, users_button, root })
+    card.add_controller(keys);
+    Rc::new(Card {
+        name,
+        entry,
+        password,
+        status,
+        indicator,
+        sessions,
+        users_button,
+        card,
+        group: group.clone(),
+        counter: counter.clone(),
+        foot,
+        full: Cell::new(0),
+    })
+}
+
+/// Keep the clock where it is: the card's height with the password showing is the
+/// measure; what it grows past goes above the clock, what it's short of under the card.
+fn balance(c: &Card) {
+    let now = c.card.measure(gtk::Orientation::Vertical, -1).1;
+    if c.password.is_visible() {
+        c.full.set(now);
+    }
+    let full = if c.full.get() > 0 { c.full.get() } else { now };
+    c.counter.set_size_request(-1, (now - full).max(0));
+    c.foot.set_size_request(-1, (full - now).max(0));
+}
+
+fn show_password(c: &Card, on: bool) {
+    if c.password.is_visible() != on {
+        c.password.set_visible(on);
+    }
+    balance(c);
 }
 
 fn avatar_widget(u: &User, size: i32) -> gtk::Widget {
@@ -437,13 +481,6 @@ fn avatar_widget(u: &User, size: i32) -> gtk::Widget {
 
 fn choose_user(g: &Rc<Greeter>, u: User) {
     if let Some(c) = g.card.borrow().as_ref() {
-        while let Some(ch) = c.avatar.first_child() {
-            c.avatar.remove_overlay(&ch);
-            if ch.parent().is_some() {
-                ch.unparent();
-            }
-        }
-        c.avatar.set_child(Some(&avatar_widget(&u, 88)));
         c.name.set_text(&u.display);
         c.entry.set_text("");
         c.entry.set_sensitive(false);
@@ -454,33 +491,33 @@ fn choose_user(g: &Rc<Greeter>, u: User) {
         {
             c.sessions.set_selected(i as u32);
         }
-    }
-    set_status(g, "", false, false);
-    if let Some(c) = g.card.borrow().as_ref() {
         c.indicator.set(Kind::Password, Phase::Idle, "");
-        c.indicator.widget().set_visible(false);
     }
+    set_status(g, "", false);
     let name = u.name.clone();
     *g.user.borrow_mut() = Some(u);
     let _ = g.tx.send(Command::Login(name));
 }
 
-fn set_status(g: &Greeter, text: &str, error: bool, busy: bool) {
+fn set_status(g: &Greeter, text: &str, error: bool) {
     if let Some(c) = g.card.borrow().as_ref() {
         c.status.set_text(text);
+        c.status.set_visible(!text.is_empty());
         if error {
             c.status.add_css_class("error");
         } else {
             c.status.remove_css_class("error");
         }
-        c.spinner.set_visible(busy);
-        c.spinner.set_spinning(busy);
+        balance(c);
     }
 }
 
 fn shake(c: &Card) {
-    c.root.add_css_class("shake");
-    let r = c.root.clone();
+    if c.indicator.style() == Style::Edge {
+        return;
+    }
+    c.card.add_css_class("shake");
+    let r = c.card.clone();
     glib::timeout_add_local_once(Duration::from_millis(450), move || r.remove_css_class("shake"));
 }
 
@@ -489,15 +526,17 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
     match e {
         Event::Prompt { text, secret } => {
             if let Some(c) = &card {
-                c.entry.set_visibility(!secret);
-                c.entry.set_placeholder_text(Some(if text.is_empty() { "Password" } else { &text }));
-                c.entry.set_sensitive(true);
-                c.entry.grab_focus();
-                c.spinner.set_visible(false);
                 // The reader or camera gave up and PAM went on to the password.
                 if c.indicator.phase() == Phase::Scanning && c.indicator.kind() != Kind::Password {
                     c.indicator.set(c.indicator.kind(), Phase::Timeout, "Use your password");
+                } else if c.indicator.phase() != Phase::Failure {
+                    c.indicator.set(Kind::Password, Phase::Idle, "");
                 }
+                c.entry.set_visibility(!secret);
+                c.entry.set_placeholder_text(Some(if text.is_empty() { "Password" } else { &text }));
+                c.entry.set_sensitive(true);
+                show_password(c, true);
+                c.entry.grab_focus();
                 if let Some(t) = g.opts.type_text.clone()
                     && !g.typed_once.replace(true)
                 {
@@ -507,22 +546,18 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
             }
         }
         Event::Info(text) if biometric(g, &text, false) => {}
-        Event::Info(text) => set_status(g, &text, false, true),
+        Event::Info(text) => set_status(g, &text, false),
         Event::Notice(text) => {
             if !biometric(g, &text, true) {
-                set_status(g, &text, true, false);
+                set_status(g, &text, true);
             }
         }
         Event::Authenticated => {
-            set_status(g, "Starting…", false, true);
-            if let Some(c) = &card
-                && c.indicator.widget().is_visible()
-            {
-                c.indicator.set(c.indicator.kind(), Phase::Success, "");
-            }
             let Some(c) = card else { return };
+            c.indicator.set(c.indicator.kind(), Phase::Success, "");
+            set_status(g, "", false);
             let Some(s) = g.sessions.get(c.sessions.selected() as usize).cloned().or_else(|| g.sessions.first().cloned()) else {
-                set_status(g, "No sessions are installed.", true, false);
+                set_status(g, "No sessions are installed.", true);
                 return;
             };
             if let Some(u) = g.user.borrow().as_ref() {
@@ -531,24 +566,30 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
                     g.state.borrow().save();
                 }
             }
+            g.signed_in.set(Some(glib::monotonic_time()));
+            if !g.still {
+                let group = c.group.clone();
+                glib::timeout_add_local_once(FADE_AFTER, move || group.add_css_class("leaving"));
+            }
             let _ = g.tx.send(Command::Start { cmd: s.cmd.clone(), env: s.env() });
         }
         Event::Started => {
             if test_mode(&g.opts) {
-                set_status(g, "Signed in (demo)", false, false);
                 return;
             }
-            g.app.quit();
+            // The fade has its time; the session is already starting.
+            let since = g.signed_in.get().map_or(i64::MAX, |t| glib::monotonic_time() - t);
+            let left = (LEAVE_AFTER.as_micros() as i64 - since).max(0) as u64;
+            let app = g.app.clone();
+            glib::timeout_add_local_once(Duration::from_micros(left), move || app.quit());
         }
         Event::Failed(msg) => {
             if let Some(c) = &card {
                 c.entry.set_text("");
                 shake(c);
-                if c.indicator.widget().is_visible() {
-                    c.indicator.set(c.indicator.kind(), Phase::Failure, &msg);
-                }
+                c.indicator.set(c.indicator.kind(), Phase::Failure, &msg);
             }
-            set_status(g, &msg, true, false);
+            set_status(g, "", false);
             let user = g.user.borrow().as_ref().map(|u| u.name.clone());
             if let Some(name) = user {
                 let _ = g.tx.send(Command::Login(name));
@@ -558,13 +599,13 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
             if let Some(c) = &card {
                 c.entry.set_sensitive(false);
             }
-            set_status(g, &msg, true, false);
+            set_status(g, &msg, true);
         }
     }
 }
 
-/// A message about a fingerprint, a face or a key goes to the indicator (shown from
-/// then on): scanning, or a miss when `miss`. Whether it was one.
+/// A message about a fingerprint, a face or a key goes to the ring, and the password
+/// waits until PAM asks for it: scanning, or a miss when `miss`. Whether it was one.
 fn biometric(g: &Greeter, text: &str, miss: bool) -> bool {
     let Some(kind) = nyx_signin_ui::kind_of(text) else {
         return false;
@@ -572,11 +613,11 @@ fn biometric(g: &Greeter, text: &str, miss: bool) -> bool {
     let Some(c) = g.card.borrow().clone() else {
         return false;
     };
-    c.indicator.widget().set_visible(true);
     let failed = miss || text.to_lowercase().contains("fail") || text.to_lowercase().contains("not match");
     c.indicator.set(kind, if failed { Phase::Failure } else { Phase::Scanning }, text);
-    c.spinner.set_visible(false);
     c.status.set_text("");
+    c.status.set_visible(false);
+    show_password(&c, false);
     true
 }
 

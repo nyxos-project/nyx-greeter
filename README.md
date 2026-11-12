@@ -5,8 +5,10 @@ Rust and GTK 4, running in a bare Hyprland session.
 
 ![Nyx Greeter](docs/preview.png)
 
-- The theme's wallpaper, darkened, on every display, with the clock; the card sits on
-  the largest.
+- The lock screen's layout: the clock and the sign-in card as one group in the middle
+  of the largest display, over the wallpaper (the clock alone on the others). The card
+  has the sign-in ring, the name, the password when PAM asks for it, and the other
+  users and sessions.
 - The last user and their session are preselected; the others are one click away.
 - Passwords, fingerprints and any other PAM prompts, as PAM sends them.
 - Suspend, restart and shut down.

@@ -35,8 +35,6 @@ pub struct Config {
     pub default_session: Option<String>,
     /// Extra folders of `.desktop` sessions.
     pub session_dirs: Vec<PathBuf>,
-    /// The mark above the card.
-    pub mark: Option<PathBuf>,
     /// The sign-in animation for a fingerprint, face or key: `circular`, `cyberpunk`,
     /// `minimal` or `edge`.
     pub style: String,
@@ -47,13 +45,12 @@ impl Default for Config {
         Config {
             theme: "nyx-dark".into(),
             wallpaper: None,
-            dim: 0.55,
+            dim: 0.0,
             user_list: true,
             power: true,
             clock: true,
             default_session: None,
             session_dirs: vec![],
-            mark: None,
             style: "circular".into(),
         }
     }
@@ -127,7 +124,7 @@ mod tests {
         assert_eq!(c.theme, "nyx-light");
         assert!(!c.power);
         assert!(c.user_list);
-        assert_eq!(Config::default().dim, 0.55);
+        assert_eq!(Config::default().dim, 0.0);
     }
 
     #[test]

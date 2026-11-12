@@ -3,17 +3,15 @@
 # A Nyx theme id; the login theme is a system setting, not a user's.
 theme = "nyx-dark"
 
-# The picture behind the card, and how much to darken it (0 to 1). Without one, the
-# theme's background colour.
-# wallpaper = "/usr/share/backgrounds/nyx/nyx-dark/monochrome/nyx_monochrome_02_4K.jpg"
-dim = 0.55
+# The picture behind the clock and card, and how much to darken it (0 to 1). Without
+# one, the theme's background colour. NyxOS gives it the lock screen's (N, Y and X
+# stacked on the right).
+# wallpaper = "/usr/share/backgrounds/nyx/catppuccin-mocha/wordmark/nyx_wordmark_lock_4K.png"
+dim = 0
 
 # The sign-in animation while a fingerprint, face or security key is checked:
 # circular, cyberpunk, minimal or edge.
 style = "circular"
-
-# The mark above the card (a PNG or SVG).
-# mark = "/usr/share/nyx-greeter/mark.png"
 
 # Offer the other users (the last one is always preselected).
 user_list = true

@@ -6,7 +6,7 @@ window.nyx-greeter {
 }
 
 .clock {
-  font-size: 72px;
+  font-size: 96px;
   font-weight: 300;
   color: @theme_text;
   letter-spacing: 2px;
@@ -55,9 +55,46 @@ entry.password {
 }
 
 .status {
+  font-size: 14px;
+  color: alpha(@theme_text, 0.75);
+}
+
+.hint {
   font-size: 13px;
-  color: @theme_dim_text;
-  min-height: 18px;
+  color: alpha(@theme_text, 0.6);
+}
+
+/* Switching user and session: quiet, in the accent colour, like the lock screen's choices. */
+window.nyx-greeter .greeter-choices button,
+window.nyx-greeter .greeter-choices dropdown > button {
+  background: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  min-height: 0;
+  padding: 6px 10px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 120ms ease;
+}
+
+window.nyx-greeter .greeter-choices button label {
+  color: @theme_accent;
+}
+
+window.nyx-greeter .greeter-choices button:hover,
+window.nyx-greeter .greeter-choices button:focus-visible {
+  background-color: alpha(@theme_accent, 0.12);
+}
+
+/* The clock and card fade once signing in has worked; the session doesn't wait for it. */
+.greeter-group {
+  transition: opacity 300ms ease-out;
+}
+
+.greeter-group.leaving {
+  opacity: 0;
 }
 
 .status.error {
@@ -97,7 +134,11 @@ button.power:hover {
 
 .signin-indicator-label {
   font-size: 14px;
-  color: @theme_text;
+  color: alpha(@theme_text, 0.75);
+}
+
+.signin-indicator-label.success {
+  color: @theme_success;
 }
 
 .signin-indicator-label.monospace {
