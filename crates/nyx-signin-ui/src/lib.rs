@@ -169,6 +169,10 @@ struct State {
     shake: Option<i64>,
     now: i64,
     tick: Option<gtk::TickCallbackId>,
+    /// The drawing's side, instead of the style's own.
+    size: Option<i32>,
+    /// Reduce motion: nothing turns, sweeps, pulses or shakes.
+    still: bool,
 }
 
 /// The indicator: a drawing and its label. For [`Style::Edge`], put [`Indicator::glow`]
@@ -226,6 +230,8 @@ impl Indicator {
             shake: None,
             now: 0,
             tick: None,
+            size: None,
+            still: false,
         }));
         let ind = Rc::new(Indicator { root, area, glow, label, state });
         let st = ind.state.clone();
@@ -281,13 +287,35 @@ impl Indicator {
         self.glow.queue_draw();
     }
 
+    /// Draw `side` pixels square instead of the style's own size (Edge has none).
+    pub fn set_size(&self, side: i32) {
+        self.state.borrow_mut().size = Some(side);
+        self.restyle();
+    }
+
+    /// Reduce motion: show each phase without turning, sweeping, pulsing or shaking.
+    pub fn set_still(&self, still: bool) {
+        self.state.borrow_mut().still = still;
+        self.area.queue_draw();
+        self.glow.queue_draw();
+    }
+
+    /// Take the drawing and the words out of [`Indicator::widget`], for a caller that
+    /// lays them out apart (a name between them). They go on being drawn and updated.
+    pub fn detach(&self) -> (gtk::DrawingArea, gtk::Label) {
+        self.root.remove(&self.area);
+        self.root.remove(&self.label);
+        (self.area.clone(), self.label.clone())
+    }
+
     fn restyle(&self) {
         let s = self.state.borrow();
-        let (w, h) = match s.style {
-            Style::Circular => (140, 140),
-            Style::Cyberpunk => (156, 156),
-            Style::Minimal => (44, 44),
-            Style::Edge => (0, 0),
+        let (w, h) = match (s.style, s.size) {
+            (Style::Edge, _) => (0, 0),
+            (_, Some(side)) => (side, side),
+            (Style::Circular, None) => (140, 140),
+            (Style::Cyberpunk, None) => (156, 156),
+            (Style::Minimal, None) => (44, 44),
         };
         self.area.set_content_width(w);
         self.area.set_content_height(h);
@@ -330,7 +358,7 @@ impl Indicator {
             if s.phase != phase || s.kind != kind {
                 s.since = t;
             }
-            if phase == Phase::Failure && s.phase != Phase::Failure {
+            if phase == Phase::Failure && s.phase != Phase::Failure && !s.still {
                 s.shake = Some(t);
             }
             s.kind = kind;
@@ -341,7 +369,7 @@ impl Indicator {
     }
 
     fn moving(s: &State) -> bool {
-        s.phase == Phase::Scanning || s.shake.is_some_and(|t| s.now - t < 300_000)
+        !s.still && (s.phase == Phase::Scanning || s.shake.is_some_and(|t| s.now - t < 300_000))
     }
 
     /// Keep drawing while something moves; stop when nothing does.
@@ -380,9 +408,16 @@ fn tone(s: &State) -> gdk::RGBA {
     }
 }
 
-/// Seconds since the phase began.
+/// Seconds since the phase began; always the first moment when nothing moves.
 fn elapsed(s: &State) -> f64 {
-    (s.now - s.since).max(0) as f64 / 1e6
+    if s.still { 0.0 } else { (s.now - s.since).max(0) as f64 / 1e6 }
+}
+
+/// 0..1..0 over `period` seconds, easing at the ends: a scan line's way down and up.
+fn sweep(s: &State, period: f64) -> f64 {
+    let p = (elapsed(s) / period) % 2.0;
+    let p = if p > 1.0 { 2.0 - p } else { p };
+    0.5 - 0.5 * (p * PI).cos()
 }
 
 /// A failure shakes once: a horizontal offset over 0.3 s.
@@ -410,23 +445,34 @@ fn draw(s: &State, cr: &cairo::Context, w: f64, h: f64) {
             source(cr, &s.colours.surface, 1.0);
             let _ = cr.fill_preserve();
             cr.set_line_width(2.0);
-            source(cr, &t, 0.25);
+            // No match rings in its colour; otherwise the ring is a faint track.
+            source(cr, &t, if s.phase == Phase::Failure { 0.9 } else { 0.25 });
             let _ = cr.stroke();
-            let sweep = match s.phase {
+            let arc = match s.phase {
                 Phase::Success => 1.0,
                 Phase::Scanning => 0.28,
                 _ => 0.0,
             };
-            if sweep > 0.0 {
+            let line = (r * 0.075).max(3.0);
+            if arc > 0.0 {
                 let spin = if s.phase == Phase::Scanning { elapsed(s) / 1.3 * 2.0 * PI } else { 0.0 };
                 let start = -PI / 2.0 + spin;
-                cr.set_line_width(5.0);
+                cr.set_line_width(line);
                 cr.set_line_cap(cairo::LineCap::Round);
                 source(cr, &t, 0.9);
-                cr.arc(cx, cy, r - 6.0, start, start + sweep * 2.0 * PI);
+                cr.arc(cx, cy, r - line - 1.0, start, start + arc * 2.0 * PI);
                 let _ = cr.stroke();
             }
-            glyphs::draw(cr, s.kind, s.phase, cx, cy, r * 0.42, &t, pulse(s, 1.3));
+            let g = r * 0.42;
+            // The face or fingerprint stays on a miss, in the miss's colour.
+            let phase = if s.phase == Phase::Failure && matches!(s.kind, Kind::Face | Kind::Fingerprint) { Phase::Idle } else { s.phase };
+            glyphs::draw(cr, s.kind, phase, cx, cy, g, &t, pulse(s, 1.3));
+            if s.phase == Phase::Scanning && matches!(s.kind, Kind::Face | Kind::Fingerprint) {
+                let y = cy - g + 2.0 * g * sweep(s, 1.3);
+                source(cr, &t, 0.8);
+                cr.rectangle(cx - g * 1.05, y, g * 2.1, 1.5);
+                let _ = cr.fill();
+            }
         }
         Style::Cyberpunk => {
             rounded(cr, 0.0, 0.0, w, h, 2.0);
@@ -441,11 +487,7 @@ fn draw(s: &State, cr: &cairo::Context, w: f64, h: f64) {
             let _ = cr.fill();
             glyphs::draw(cr, s.kind, s.phase, w / 2.0, h / 2.0, w * 0.2, &t, 1.0);
             if s.phase == Phase::Scanning {
-                // Down and up, easing at the ends.
-                let p = (elapsed(s) / 1.1) % 2.0;
-                let p = if p > 1.0 { 2.0 - p } else { p };
-                let p = 0.5 - 0.5 * (p * PI).cos();
-                let y = 12.0 + p * (h - 26.0);
+                let y = 12.0 + sweep(s, 1.1) * (h - 26.0);
                 source(cr, &t, 0.8);
                 cr.rectangle(10.0, y, w - 20.0, 2.0);
                 let _ = cr.fill();

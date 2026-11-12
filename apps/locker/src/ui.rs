@@ -22,12 +22,22 @@ const FINGER_TRIES: u32 = 5;
 /// camera on.
 const FACE_REST: Duration = Duration::from_secs(10);
 
-/// What the lock screen looks like: the lock-screen theme, its wallpaper and the style.
+/// The indicator on the card.
+const RING: i32 = 96;
+
+/// From a way in succeeding to the session unlocking: the match shows, then the clock
+/// and card fade (style.css). The unlock goes by this clock, not the animation's.
+const FADE_AFTER: Duration = Duration::from_millis(250);
+const UNLOCK_AFTER: Duration = Duration::from_millis(600);
+
+/// What the lock screen looks like: the lock-screen theme, its wallpaper, the style and
+/// whether motion is reduced.
 #[derive(Debug, Clone)]
 pub struct Look {
     pub theme: String,
     pub style: Style,
     pub wallpaper: Option<PathBuf>,
+    pub still: bool,
 }
 
 fn home() -> PathBuf {
@@ -65,6 +75,7 @@ impl Look {
                 .unwrap_or_else(|| nyx_theme::DEFAULT_THEME.into()),
             style: style.or_else(|| appearance("lock-style").as_deref().and_then(Style::parse)).unwrap_or_default(),
             wallpaper: themed_wallpaper(),
+            still: nyx_theme::A11y::system().reduce_motion,
         }
     }
 }
@@ -100,6 +111,14 @@ struct Screen {
     card: gtk::Box,
     time: gtk::Label,
     date: gtk::Label,
+    /// The clock and card, centred together; they fade as the session unlocks.
+    group: gtk::Box,
+    /// Above the clock: as tall as the password makes the card grow, so the clock
+    /// stays where it was.
+    counter: gtk::Box,
+    password: gtk::Box,
+    use_password: gtk::Button,
+    retry: gtk::Button,
 }
 
 struct Locker {
@@ -115,6 +134,8 @@ struct Locker {
     finger_tries: Cell<u32>,
     /// When the next face scan may start (monotonic µs).
     face_after: Cell<i64>,
+    /// The way in "Try again" starts again.
+    retry: Cell<Option<Method>>,
     unlocking: Cell<bool>,
     lock: RefCell<Option<gtk4_session_lock::Instance>>,
     code: Rc<Cell<u8>>,
@@ -145,6 +166,7 @@ pub fn start(app: &gtk::Application, look: Look, opts: Options, code: Rc<Cell<u8
         events: tx,
         finger_tries: Cell::new(0),
         face_after: Cell::new(0),
+        retry: Cell::new(None),
         unlocking: Cell::new(false),
         lock: RefCell::default(),
         code,
@@ -313,64 +335,105 @@ fn window(l: &Rc<Locker>, demo: bool) -> gtk::Window {
         bg.set_paintable(Some(&t));
     }
     overlay.set_child(Some(&bg));
-    let dim = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string("box.lock-dim { background-color: alpha(black, 0.55); }");
-    gtk::style_context_add_provider_for_display(&WidgetExt::display(&w), &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
-    dim.add_css_class("lock-dim");
-    overlay.add_overlay(&dim);
 
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    // The clock and the card: one group in the middle of the screen.
+    let group = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    group.add_css_class("lock-group");
+    group.set_halign(gtk::Align::Center);
+    group.set_valign(gtk::Align::Center);
+    let counter = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let time = gtk::Label::new(None);
     time.add_css_class("clock");
     let date = gtk::Label::new(None);
     date.add_css_class("date");
     let clock = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    clock.set_margin_top(96);
+    clock.set_margin_bottom(40);
     clock.append(&time);
     clock.append(&date);
-    content.append(&clock);
-    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    spacer.set_vexpand(true);
-    content.append(&spacer);
+    group.append(&counter);
+    group.append(&clock);
 
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    // The card: the ring, the name, what's happening, and the password or the choice of it.
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 10);
     card.add_css_class("card");
     card.set_halign(gtk::Align::Center);
     card.set_size_request(360, -1);
     let name = full_name(&l.user);
-    let pic = nyx_signin_ui::picture_of(&l.user, &home());
-    let avatar = nyx_signin_ui::avatar(pic.as_deref(), &nyx_signin_ui::initials(&name, &l.user), 80);
-    avatar.set_halign(gtk::Align::Center);
     let who = gtk::Label::new(Some(&name));
     who.add_css_class("name");
+    who.set_margin_top(6);
     let indicator = Indicator::new(l.look.style, Colours::of_theme(&l.look.theme));
-    let entry = gtk::PasswordEntry::new();
-    entry.set_show_peek_icon(true);
-    entry.add_css_class("password");
-    entry.set_property("placeholder-text", "Password");
-    entry.update_property(&[gtk::accessible::Property::Label(&format!("Password for {name}"))]);
+    if matches!(l.look.style, Style::Circular | Style::Cyberpunk) {
+        indicator.set_size(RING);
+    }
+    indicator.set_still(l.look.still);
+    let (ring, caption) = indicator.detach();
     let status = gtk::Label::new(None);
     status.add_css_class("status");
     status.set_wrap(true);
     status.set_justify(gtk::Justification::Center);
     status.set_max_width_chars(36);
-    card.append(&avatar);
+    status.set_visible(false);
+    // One line is always kept for the words, so the card doesn't jump as they come and go.
+    let words = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    words.set_size_request(-1, 20);
+    words.append(&caption);
+    words.append(&status);
+
+    let entry = gtk::PasswordEntry::new();
+    entry.set_show_peek_icon(true);
+    entry.add_css_class("password");
+    entry.set_property("placeholder-text", "Password");
+    entry.update_property(&[gtk::accessible::Property::Label(&format!("Password for {name}"))]);
+    let hint = gtk::Label::new(Some("Press Enter to unlock"));
+    hint.add_css_class("hint");
+    let password = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    password.set_margin_top(4);
+    password.append(&entry);
+    password.append(&hint);
+
+    let retry = gtk::Button::with_label("Try again");
+    let use_password = gtk::Button::with_label("Use password");
+    for b in [&retry, &use_password] {
+        b.add_css_class("choice");
+    }
+    retry.set_visible(false);
+    let choices = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    choices.set_halign(gtk::Align::Center);
+    choices.append(&retry);
+    choices.append(&use_password);
+
+    // With a face, fingerprint or key the password waits behind "Use password" (or the
+    // first key typed); with only the password, it's there.
+    let others = l.methods.iter().any(|m| *m != Method::Password);
+    password.set_visible(!others);
+    choices.set_visible(others);
+    if !others {
+        status.set_text("Enter your password");
+        status.set_visible(true);
+    }
+
+    card.append(&ring);
     card.append(&who);
-    if l.look.style != Style::Edge {
-        card.append(indicator.widget());
-    }
-    card.append(&entry);
-    card.append(&status);
-    if l.look.style == Style::Edge {
-        card.append(indicator.widget());
-    }
-    content.append(&card);
-    let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    spacer.set_vexpand(true);
-    content.append(&spacer);
-    overlay.add_overlay(&content);
+    card.append(&words);
+    card.append(&password);
+    card.append(&choices);
+    group.append(&card);
+    overlay.add_overlay(&group);
     overlay.add_overlay(indicator.glow());
+
+    let wl = Rc::downgrade(l);
+    use_password.connect_clicked(move |_| {
+        if let Some(l) = wl.upgrade() {
+            show_password(&l);
+        }
+    });
+    let wl = Rc::downgrade(l);
+    retry.connect_clicked(move |_| {
+        if let Some(l) = wl.upgrade() {
+            try_again(&l);
+        }
+    });
 
     let wl = Rc::downgrade(l);
     entry.connect_activate(move |e| {
@@ -390,11 +453,24 @@ fn window(l: &Rc<Locker>, demo: bool) -> gtk::Window {
         }
     });
     // Coming back (a key or the pointer) starts a face scan; the camera isn't kept on.
+    // Typing while the password waits behind "Use password" opens it with what's typed.
     let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let wl = Rc::downgrade(l);
-    keys.connect_key_pressed(move |_, _, _, _| {
-        if let Some(l) = wl.upgrade() {
-            wake(&l);
+    keys.connect_key_pressed(move |_, key, _, _| {
+        let Some(l) = wl.upgrade() else { return glib::Propagation::Proceed };
+        wake(&l);
+        let typed = key.to_unicode().filter(|c| !c.is_control() && !c.is_whitespace());
+        if let Some(c) = typed
+            && !l.unlocking.get()
+            && l.screens.borrow().first().is_some_and(|s| !s.password.is_visible())
+        {
+            show_password(&l);
+            if let Some(s) = l.screens.borrow().first() {
+                s.entry.set_text(&c.to_string());
+                s.entry.set_position(-1);
+            }
+            return glib::Propagation::Stop;
         }
         glib::Propagation::Proceed
     });
@@ -408,8 +484,63 @@ fn window(l: &Rc<Locker>, demo: bool) -> gtk::Window {
     });
     w.add_controller(motion);
     w.set_child(Some(&overlay));
-    l.screens.borrow_mut().push(Screen { entry, status, indicator, card, time, date });
+    l.screens.borrow_mut().push(Screen {
+        entry,
+        status,
+        indicator,
+        card,
+        time,
+        date,
+        group,
+        counter,
+        password,
+        use_password,
+        retry,
+    });
     w
+}
+
+/// Open the password on every screen. The card grows below; the counterweight above the
+/// clock grows as much, so the clock stays put.
+fn show_password(l: &Rc<Locker>) {
+    for s in l.screens.borrow().iter() {
+        if s.password.is_visible() {
+            continue;
+        }
+        let before = s.card.measure(gtk::Orientation::Vertical, -1).1;
+        s.password.set_visible(true);
+        s.use_password.set_visible(false);
+        s.retry.set_visible(false);
+        let after = s.card.measure(gtk::Orientation::Vertical, -1).1;
+        s.counter.set_size_request(-1, (after - before).max(0));
+    }
+    l.retry.set(None);
+    indicate(l, Kind::Password, Phase::Idle, "");
+    set_status(l, "Enter your password", false);
+    if let Some(s) = l.screens.borrow().first() {
+        s.entry.grab_focus();
+    }
+}
+
+/// Offer "Try again" for `m` after a miss.
+fn offer_retry(l: &Locker, m: Method) {
+    l.retry.set(Some(m));
+    for s in l.screens.borrow().iter() {
+        s.retry.set_visible(!s.password.is_visible());
+    }
+}
+
+fn try_again(l: &Rc<Locker>) {
+    let Some(m) = l.retry.take() else { return };
+    for s in l.screens.borrow().iter() {
+        s.retry.set_visible(false);
+    }
+    match m {
+        Method::Face => l.face_after.set(0),
+        Method::Fingerprint => l.finger_tries.set(0),
+        _ => {}
+    }
+    run(l, m);
 }
 
 pub fn full_name(user: &str) -> String {
@@ -432,7 +563,11 @@ fn begin(l: &Rc<Locker>) {
         }
     }
     if let Some(s) = l.screens.borrow().first() {
-        s.entry.grab_focus();
+        if s.password.is_visible() {
+            s.entry.grab_focus();
+        } else {
+            s.use_password.grab_focus();
+        }
     }
 }
 
@@ -466,6 +601,7 @@ fn indicate(l: &Locker, k: Kind, phase: Phase, message: &str) {
 fn set_status(l: &Locker, text: &str, error: bool) {
     for s in l.screens.borrow().iter() {
         s.status.set_text(text);
+        s.status.set_visible(!text.is_empty());
         if error {
             s.status.add_css_class("error");
         } else {
@@ -490,6 +626,7 @@ fn on_event(l: &Rc<Locker>, e: Event) {
         Event::Prompt { method: Method::Password, .. } => {}
         Event::Prompt { method, text, .. } => {
             // A security key's PIN: the entry answers it.
+            show_password(l);
             set_status(l, &text, false);
             if let Some(tx) = l.running.borrow_mut().remove(&method) {
                 l.running.borrow_mut().insert(Method::Password, tx);
@@ -503,8 +640,22 @@ fn on_event(l: &Rc<Locker>, e: Event) {
             l.unlocking.set(true);
             indicate(l, kind(method), Phase::Success, "");
             set_status(l, "", false);
+            for s in l.screens.borrow().iter() {
+                s.use_password.set_sensitive(false);
+                s.retry.set_sensitive(false);
+            }
+            if !l.look.still {
+                let wl = Rc::downgrade(l);
+                glib::timeout_add_local_once(FADE_AFTER, move || {
+                    if let Some(l) = wl.upgrade() {
+                        for s in l.screens.borrow().iter() {
+                            s.group.add_css_class("unlocking");
+                        }
+                    }
+                });
+            }
             let wl = Rc::downgrade(l);
-            glib::timeout_add_local_once(Duration::from_millis(420), move || {
+            glib::timeout_add_local_once(UNLOCK_AFTER, move || {
                 let Some(l) = wl.upgrade() else { return };
                 match l.lock.borrow().as_ref() {
                     Some(inst) => inst.unlock(),
@@ -528,11 +679,13 @@ fn on_event(l: &Rc<Locker>, e: Event) {
                         again(l, Method::Fingerprint, 1500);
                     } else {
                         indicate(l, Kind::Fingerprint, Phase::Timeout, "Use your password");
+                        offer_retry(l, Method::Fingerprint);
                     }
                 }
                 Method::Face => {
                     l.face_after.set(glib::monotonic_time() + FACE_REST.as_micros() as i64);
                     indicate(l, Kind::Face, Phase::Failure, &text);
+                    offer_retry(l, Method::Face);
                 }
                 Method::Key => again(l, Method::Key, 2000),
             }

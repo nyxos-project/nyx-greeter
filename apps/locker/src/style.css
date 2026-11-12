@@ -55,9 +55,45 @@ entry.password {
 }
 
 .status {
+  font-size: 14px;
+  color: alpha(@theme_text, 0.75);
+}
+
+.hint {
   font-size: 13px;
-  color: @theme_dim_text;
-  min-height: 18px;
+  color: alpha(@theme_text, 0.6);
+}
+
+window.nyx-locker button.choice {
+  background: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  min-height: 0;
+  padding: 6px 10px;
+  border-radius: 7px;
+  color: @theme_accent;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 120ms ease;
+}
+
+window.nyx-locker button.choice label {
+  color: @theme_accent;
+}
+
+window.nyx-locker button.choice:hover,
+window.nyx-locker button.choice:focus-visible {
+  background-color: alpha(@theme_accent, 0.12);
+}
+
+/* The clock and card fade once a way in has succeeded; the unlock doesn't wait for it. */
+.lock-group {
+  transition: opacity 300ms ease-out;
+}
+
+.lock-group.unlocking {
+  opacity: 0;
 }
 
 .status.error {
@@ -101,7 +137,11 @@ button.power:hover {
 
 .signin-indicator-label {
   font-size: 14px;
-  color: @theme_text;
+  color: alpha(@theme_text, 0.75);
+}
+
+.signin-indicator-label.success {
+  color: @theme_success;
 }
 
 .signin-indicator-label.monospace {
