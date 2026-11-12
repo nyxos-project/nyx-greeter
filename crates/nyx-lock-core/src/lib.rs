@@ -177,29 +177,35 @@ pub fn start(method: Method, user: &str, events: impl Fn(Event) + Send + Clone +
     tx
 }
 
-/// Whose session this is.
+/// Whose session this is: the account of the process's own uid, never `$USER` (the
+/// environment mustn't choose whose password unlocks the session).
 pub fn user() -> String {
-    std::env::var("USER").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| {
-        let uid = std::fs::read_to_string("/proc/self/status")
-            .ok()
-            .and_then(|s| {
-                s.lines().find_map(|l| l.strip_prefix("Uid:")).and_then(|v| v.split_whitespace().next().map(String::from))
-            })
-            .unwrap_or_default();
-        std::fs::read_to_string("/etc/passwd")
-            .unwrap_or_default()
-            .lines()
-            .find_map(|l| {
-                let f: Vec<&str> = l.split(':').collect();
-                (f.get(2) == Some(&uid.as_str())).then(|| f[0].to_string())
-            })
-            .unwrap_or_default()
-    })
+    // SAFETY: getpwuid_r fills `pwd` and the strings it points at inside `buf`, which
+    // outlive the read below; a null `found` means no entry.
+    unsafe {
+        let mut pwd: libc::passwd = std::mem::zeroed();
+        let mut buf = vec![0 as libc::c_char; 16 * 1024];
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        let rc = libc::getpwuid_r(libc::getuid(), &mut pwd, buf.as_mut_ptr(), buf.len(), &mut found);
+        if rc != 0 || found.is_null() || pwd.pw_name.is_null() {
+            return String::new();
+        }
+        std::ffi::CStr::from_ptr(pwd.pw_name).to_string_lossy().into_owned()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_user_comes_from_the_uid() {
+        let me = user();
+        assert!(!me.is_empty());
+        // SAFETY: changing this process's environment in a single-threaded check.
+        unsafe { std::env::set_var("USER", "someone-else") };
+        assert_eq!(user(), me);
+    }
 
     #[test]
     fn the_password_is_always_first_and_methods_are_unique() {

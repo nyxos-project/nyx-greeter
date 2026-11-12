@@ -1038,6 +1038,7 @@ dependencies = [
 name = "nyx-lock-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "pam-client2",
  "serde",
  "toml",
