@@ -1,6 +1,6 @@
--- The Hyprland session greetd runs Nyx Greeter in: no binds, no animations, nothing
--- but the greeter. Hyprland exits when the greeter does, so greetd can start the
--- user's session (or show the greeter again).
+-- The Hyprland session greetd runs Nyx Greeter in: no animations, nothing but the
+-- greeter and a screen reader. Hyprland exits when the greeter does, so greetd can start
+-- the user's session (or show the greeter again).
 
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" })
 
@@ -19,6 +19,9 @@ hl.config({
   },
   ecosystem = { no_update_news = true, no_donation_nag = true },
 })
+
+-- Super+Alt+S starts and stops the Orca screen reader, as on GNOME's login screen.
+hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd([[sh -c 'pkill -f "bin/\.?orca" || exec orca --replace']]), { description = "Screen reader" })
 
 hl.on("hyprland.start", function()
   hl.exec_cmd("sh -c 'nyx-greeter; hyprctl eval \"hl.dispatch(hl.dsp.exit())\"'")

@@ -25,6 +25,9 @@ const RING: i32 = 96;
 const FADE_AFTER: Duration = Duration::from_millis(250);
 const LEAVE_AFTER: Duration = Duration::from_millis(600);
 
+/// How long a lost connection to greetd waits before the greeter starts over.
+const RETRY_AFTER: Duration = Duration::from_secs(10);
+
 /// The login theme is a system setting, not anyone's desktop choice.
 pub fn theme(id: &str) {
     let _ = THEME.set(id.to_string());
@@ -60,6 +63,8 @@ struct Card {
     indicator: Rc<Indicator>,
     sessions: gtk::DropDown,
     users_button: gtk::MenuButton,
+    /// Shown when the connection to greetd is lost: start over now.
+    retry: gtk::Button,
     card: gtk::Box,
     group: gtk::Box,
     /// Above the clock and under the card: what keeps the clock where it is as the card
@@ -342,6 +347,7 @@ fn build_card(g: &Rc<Greeter>, group: &gtk::Box, counter: &gtk::Box) -> Rc<Card>
     let password = gtk::Box::new(gtk::Orientation::Vertical, 8);
     password.set_margin_top(4);
     password.append(&entry);
+    password.append(&keyboard_row());
     password.append(&hint);
 
     let names: Vec<&str> = g.sessions.iter().map(|s| s.name.as_str()).collect();
@@ -397,7 +403,15 @@ fn build_card(g: &Rc<Greeter>, group: &gtk::Box, counter: &gtk::Box) -> Rc<Card>
     card.append(&ring);
     card.append(&name);
     card.append(&words);
+    let retry = gtk::Button::with_label("Try again");
+    retry.add_css_class("retry");
+    retry.set_halign(gtk::Align::Center);
+    retry.set_visible(false);
+    let app = g.app.clone();
+    retry.connect_clicked(move |_| app.quit());
+
     card.append(&password);
+    card.append(&retry);
     card.append(&choices);
     let foot = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
@@ -433,12 +447,47 @@ fn build_card(g: &Rc<Greeter>, group: &gtk::Box, counter: &gtk::Box) -> Rc<Card>
         indicator,
         sessions,
         users_button,
+        retry,
         card,
         group: group.clone(),
         counter: counter.clone(),
         foot,
         full: Cell::new(0),
     })
+}
+
+/// The keyboard layout the password is typed with, and a warning while Caps Lock is on:
+/// the two reasons a right password is refused.
+fn keyboard_row() -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.add_css_class("keyboard");
+    row.set_halign(gtk::Align::Center);
+    let layout = gtk::Label::new(None);
+    layout.add_css_class("layout");
+    let caps = gtk::Label::new(Some("Caps Lock is on"));
+    caps.add_css_class("caps");
+    caps.update_property(&[gtk::accessible::Property::Description("Warning")]);
+    row.append(&layout);
+    row.append(&caps);
+    let Some(kb) = gdk::Display::default().and_then(|d| d.default_seat()).and_then(|s| s.keyboard()) else {
+        row.set_visible(false);
+        return row;
+    };
+    let update = {
+        let (layout, caps) = (layout.clone(), caps.clone());
+        move |kb: &gdk::Device| {
+            let names = kb.layout_names();
+            let name = usize::try_from(kb.active_layout_index()).ok().and_then(|i| names.get(i)).map(|s| s.to_string());
+            layout.set_text(name.as_deref().unwrap_or(""));
+            layout.set_visible(name.is_some());
+            caps.set_visible(kb.is_caps_locked());
+        }
+    };
+    update(&kb);
+    let u = update.clone();
+    kb.connect_caps_lock_state_notify(move |kb| u(kb));
+    kb.connect_active_layout_index_notify(move |kb| update(kb));
+    row
 }
 
 /// Keep the clock where it is: the card's height with the password showing is the
@@ -599,8 +648,14 @@ fn on_event(g: &Rc<Greeter>, e: Event) {
         Event::Broken(msg) => {
             if let Some(c) = &card {
                 c.entry.set_sensitive(false);
+                c.retry.set_visible(true);
+                c.retry.grab_focus();
             }
-            set_status(g, &msg, true);
+            set_status(g, &format!("{msg}. Trying again in {} seconds.", RETRY_AFTER.as_secs()), true);
+            // Leaving ends this Hyprland session, and greetd starts a new greeter with a new
+            // connection.
+            let app = g.app.clone();
+            glib::timeout_add_local_once(RETRY_AFTER, move || app.quit());
         }
     }
 }

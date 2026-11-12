@@ -64,6 +64,21 @@ entry.password {
   color: alpha(@theme_text, 0.6);
 }
 
+.keyboard .layout {
+  font-size: 13px;
+  color: alpha(@theme_text, 0.75);
+}
+
+.keyboard .caps {
+  font-size: 13px;
+  font-weight: 600;
+  color: @theme_warning;
+}
+
+button.retry {
+  margin-top: 4px;
+}
+
 /* Switching user and session: quiet, in the accent colour, like the lock screen's choices. */
 window.nyx-greeter .greeter-choices button,
 window.nyx-greeter .greeter-choices dropdown > button {
