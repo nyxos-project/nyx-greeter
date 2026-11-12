@@ -218,7 +218,8 @@ fn build_windows(g: &Rc<Greeter>) {
             let dim = gtk::Box::new(gtk::Orientation::Vertical, 0);
             dim.add_css_class("dim");
             let provider = gtk::CssProvider::new();
-            provider.load_from_string(&format!(".dim {{ background-color: alpha(black, {:.2}); }}", g.config.dim.clamp(0.0, 0.95)));
+            provider
+                .load_from_string(&format!(".dim {{ background-color: alpha(black, {:.2}); }}", g.config.dim.clamp(0.0, 0.95)));
             gtk::style_context_add_provider_for_display(
                 &WidgetExt::display(&w),
                 &provider,
