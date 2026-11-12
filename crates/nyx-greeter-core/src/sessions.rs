@@ -85,10 +85,20 @@ pub fn parse(id: &str, text: &str) -> Option<Session> {
     }
     Some(Session {
         id: id.to_string(),
-        name: name.unwrap_or_else(|| id.trim_end_matches(".desktop").to_string()),
+        name: shown_name(id).map_or_else(|| name.unwrap_or_else(|| id.trim_end_matches(".desktop").to_string()), str::to_string),
         cmd,
         desktop_names: names,
     })
+}
+
+/// NyxOS's own sessions by what they are, not their files' names ("Hyprland
+/// (uwsm-managed)"): the desktop is Hyprland through uwsm, which starts the Nyx shell.
+fn shown_name(id: &str) -> Option<&'static str> {
+    match id {
+        "hyprland-uwsm.desktop" => Some("NyxOS"),
+        "hyprland.desktop" => Some("Hyprland without the Nyx desktop"),
+        _ => None,
+    }
 }
 
 pub fn dirs(extra: &[PathBuf]) -> Vec<PathBuf> {
@@ -156,6 +166,7 @@ mod tests {
         .unwrap();
         assert!(parse("x.desktop", "[Desktop Entry]\nName=X\nExec=x\nHidden=true\n").is_none());
         assert_eq!(u.env(), vec!["XDG_SESSION_TYPE=wayland", "XDG_CURRENT_DESKTOP=Hyprland", "XDG_SESSION_DESKTOP=Hyprland"]);
+        assert_eq!((u.name.as_str(), h.name.as_str()), ("NyxOS", "Hyprland without the Nyx desktop"));
         let all = vec![h.clone(), u.clone()];
         assert_eq!(pick(&all, None, None).unwrap().id, "hyprland-uwsm.desktop");
         assert_eq!(pick(&all, Some("hyprland.desktop"), None).unwrap().id, "hyprland.desktop");
