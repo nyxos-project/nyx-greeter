@@ -21,7 +21,7 @@ hl.config({
 })
 
 -- Super+Alt+S starts and stops the Orca screen reader, as on GNOME's login screen.
-hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd([[sh -c 'pkill -f "bin/\.?orca" || exec orca --replace']]), { description = "Screen reader" })
+hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd([[sh -c 'pkill -x orca || exec orca --replace']]), { description = "Screen reader" })
 
 hl.on("hyprland.start", function()
   hl.exec_cmd("sh -c 'nyx-greeter; hyprctl eval \"hl.dispatch(hl.dsp.exit())\"'")
