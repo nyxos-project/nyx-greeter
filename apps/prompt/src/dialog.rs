@@ -8,7 +8,25 @@ use gtk::{gdk, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::mpsc::Sender;
+
+/// Nyx Biometrics' gate skips face, fingerprint and keys in administrator prompts while
+/// this is fresh in the person's runtime folder, so the password comes first.
+fn marker(uid: u32) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("/run/user/{uid}/nyx-auth/password-first"))
+}
+
+/// This process's user ID.
+fn my_uid() -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/proc/self").ok().map(|m| m.uid())
+}
+
+fn uid_of(user: &str) -> Option<u32> {
+    std::fs::read_to_string("/etc/passwd").ok()?.lines().find_map(|l| {
+        let f: Vec<&str> = l.split(':').collect();
+        (f.first() == Some(&user)).then(|| f.get(2)?.parse().ok()).flatten()
+    })
+}
 
 pub fn install_css() {
     nyx_theme::use_design_2();
@@ -39,8 +57,12 @@ struct Dialog {
     request: RefCell<Option<Request>>,
     done: RefCell<Option<Done>>,
     user: RefCell<String>,
-    /// Answers for the helper's current conversation; dropping it ends the conversation.
-    answers: RefCell<Option<Sender<String>>>,
+    /// The helper's current conversation; dropping it ends the conversation.
+    talk: RefCell<Option<helper::Talk>>,
+    /// The conversation was ended to start again password first.
+    restarting: Cell<bool>,
+    /// Shown while a face, finger or key is awaited.
+    use_password: gtk::Button,
     /// The helper is waiting for an answer.
     asking: Cell<bool>,
     /// A password was sent in this conversation, so a failure means a wrong one.
@@ -111,7 +133,10 @@ fn shake(d: &Dialog) {
 }
 
 fn finish(d: &Rc<Dialog>, ok: bool) {
-    d.answers.borrow_mut().take();
+    d.talk.borrow_mut().take();
+    if let Some(uid) = my_uid() {
+        let _ = std::fs::remove_file(marker(uid));
+    }
     d.window.close();
     CURRENT.with(|c| c.borrow_mut().take());
     if let (Some(req), Some(done)) = (d.request.borrow_mut().take(), d.done.borrow_mut().take()) {
@@ -126,30 +151,75 @@ pub fn cancel_shown() {
     }
 }
 
+/// Skip the face, finger or key this time: mark it for the gate and start the
+/// conversation again, which now asks for the password straight away. Only for your own
+/// account, whose runtime folder the gate reads.
+fn password_first(d: &Rc<Dialog>) {
+    if d.asking.get() || d.restarting.get() || d.demo {
+        return;
+    }
+    let Some(uid) = my_uid().filter(|u| uid_of(&d.user.borrow()) == Some(*u)) else { return };
+    let path = marker(uid);
+    let made = path.parent().is_some_and(|dir| {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).is_ok()
+    }) && std::fs::write(&path, "").is_ok();
+    if !made {
+        return;
+    }
+    d.use_password.set_visible(false);
+    d.restarting.set(true);
+    set_status(d, "", false);
+    if let Some(t) = d.talk.borrow().as_ref() {
+        t.cancel();
+    }
+}
+
 /// A conversation with polkit's helper for the chosen account.
 fn converse(d: &Rc<Dialog>) {
     d.tried.set(false);
     d.asking.set(false);
+    d.restarting.set(false);
+    d.use_password.set_visible(false);
     if d.demo {
         d.asking.set(true);
-        d.entry.set_sensitive(true);
         d.entry.grab_focus();
         return;
     }
     let cookie = d.request.borrow().as_ref().map(|r| r.cookie.clone()).unwrap_or_default();
     let (tx, rx) = async_channel::unbounded();
-    *d.answers.borrow_mut() = Some(helper::start(&d.user.borrow(), &cookie, tx));
+    *d.talk.borrow_mut() = Some(helper::start(&d.user.borrow(), &cookie, tx));
+    // Typing waits for a scan otherwise; offer the password once one is awaited.
+    let wd = Rc::downgrade(d);
+    glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || {
+        if let Some(d) = wd.upgrade()
+            && !d.asking.get()
+            && !d.restarting.get()
+            && d.talk.borrow().is_some()
+            && my_uid().is_some_and(|u| uid_of(&d.user.borrow()) == Some(u))
+        {
+            d.use_password.set_visible(true);
+        }
+    });
     let wd = Rc::downgrade(d);
     glib::spawn_future_local(async move {
         while let Ok(line) = rx.recv().await {
             let Some(d) = wd.upgrade() else { return };
+            // Ended to start again password first: the old conversation's end is no news.
+            if d.restarting.get() {
+                if matches!(line, Line::Done(_)) {
+                    converse(&d);
+                    return;
+                }
+                continue;
+            }
             match line {
                 Line::Request { text, echo } => {
                     d.asking.set(true);
+                    d.use_password.set_visible(false);
                     d.entry.set_show_peek_icon(!echo);
                     let hint = text.trim().trim_end_matches(':');
                     d.entry.set_property("placeholder-text", if hint.is_empty() { "Password" } else { hint });
-                    d.entry.set_sensitive(true);
                     d.ok.set_sensitive(!d.entry.text().is_empty());
                     d.entry.grab_focus();
                 }
@@ -190,10 +260,9 @@ fn submit(d: &Rc<Dialog>) {
         }
         return;
     }
-    d.entry.set_sensitive(false);
     d.ok.set_sensitive(false);
-    if let Some(tx) = d.answers.borrow().as_ref() {
-        let _ = tx.send(text);
+    if let Some(t) = d.talk.borrow().as_ref() {
+        let _ = t.answers.send(text);
     }
 }
 
@@ -293,9 +362,16 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
     entry.set_show_peek_icon(true);
     entry.add_css_class("password");
     entry.set_property("placeholder-text", "Password");
-    entry.set_sensitive(false);
     entry.update_property(&[gtk::accessible::Property::Label("Password")]);
     card.append(&entry);
+
+    let use_password = gtk::Button::with_label("Use password instead");
+    use_password.add_css_class("flat");
+    use_password.add_css_class("use-password");
+    use_password.set_halign(gtk::Align::Center);
+    use_password.set_visible(false);
+    use_password.set_tooltip_text(Some("Skip the face, fingerprint or security key this time"));
+    card.append(&use_password);
 
     let status = gtk::Label::new(None);
     status.add_css_class("status");
@@ -343,7 +419,9 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
         request: RefCell::new(Some(req)),
         done: RefCell::new(Some(done)),
         user: RefCell::new(user),
-        answers: RefCell::default(),
+        talk: RefCell::default(),
+        restarting: Cell::new(false),
+        use_password: use_password.clone(),
         asking: Cell::new(false),
         tried: Cell::new(false),
         demo,
@@ -357,7 +435,7 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
             let users = d.request.borrow().as_ref().map(|r| r.users.clone()).unwrap_or_default();
             if let Some(u) = users.get(dd.selected() as usize) {
                 *d.user.borrow_mut() = u.clone();
-                d.answers.borrow_mut().take();
+                d.talk.borrow_mut().take();
                 set_status(&d, "", false);
                 converse(&d);
             }
@@ -397,6 +475,17 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
     entry.connect_changed(move |e| {
         if let Some(d) = wd.upgrade() {
             d.ok.set_sensitive(d.asking.get() && !e.text().is_empty());
+            // Typing while a scan is awaited means the password, now.
+            if !e.text().is_empty() && !d.asking.get() && !d.tried.get() {
+                password_first(&d);
+            }
+        }
+    });
+    let wd = Rc::downgrade(&d);
+    use_password.connect_clicked(move |_| {
+        if let Some(d) = wd.upgrade() {
+            password_first(&d);
+            d.entry.grab_focus();
         }
     });
     w.present();

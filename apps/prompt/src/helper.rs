@@ -3,7 +3,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 
 pub const SOCKET: &str = "/run/polkit/agent-helper.socket";
 
@@ -69,12 +69,36 @@ fn unescape(s: &str) -> String {
     out
 }
 
+/// One conversation: answers for the helper's requests, and the socket, to end it even
+/// while PAM is busy (waiting for a finger, say).
+pub struct Talk {
+    pub answers: mpsc::Sender<String>,
+    stream: Arc<Mutex<Option<UnixStream>>>,
+}
+
+impl Talk {
+    /// End the conversation now; the helper gives up and polkit hears nothing from it.
+    pub fn cancel(&self) {
+        if let Some(s) = self.stream.lock().ok().and_then(|mut s| s.take()) {
+            let _ = s.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+impl Drop for Talk {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
 /// Authenticate `user` for `cookie` on its own thread. Lines go to `lines`; answers
-/// to the helper's requests come from the returned sender. Dropping that sender ends
-/// the conversation (a cancel).
-pub fn start(user: &str, cookie: &str, lines: async_channel::Sender<Line>) -> mpsc::Sender<String> {
+/// to the helper's requests go through the returned [`Talk`], which ends the
+/// conversation when cancelled or dropped.
+pub fn start(user: &str, cookie: &str, lines: async_channel::Sender<Line>) -> Talk {
     let (answers, rx) = mpsc::channel::<String>();
     let (user, cookie) = (user.to_string(), cookie.to_string());
+    let shared: Arc<Mutex<Option<UnixStream>>> = Arc::default();
+    let slot = shared.clone();
     std::thread::spawn(move || {
         let done = |ok| {
             let _ = lines.send_blocking(Line::Done(ok));
@@ -83,6 +107,9 @@ pub fn start(user: &str, cookie: &str, lines: async_channel::Sender<Line>) -> mp
             let _ = lines.send_blocking(Line::Error("Polkit's helper isn't running".into()));
             return done(false);
         };
+        if let (Ok(mut slot), Ok(copy)) = (slot.lock(), stream.try_clone()) {
+            *slot = Some(copy);
+        }
         if stream.write_all(format!("{user}\n{cookie}\n").as_bytes()).is_err() {
             return done(false);
         }
@@ -105,7 +132,7 @@ pub fn start(user: &str, cookie: &str, lines: async_channel::Sender<Line>) -> mp
         }
         done(false);
     });
-    answers
+    Talk { answers, stream: shared }
 }
 
 #[cfg(test)]

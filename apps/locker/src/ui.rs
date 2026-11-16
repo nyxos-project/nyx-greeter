@@ -285,7 +285,9 @@ fn set_locked_hint(locked: bool) {
     const SESSION: &str = "/org/freedesktop/login1/session/auto";
     let Ok(bus) = gio::bus_get_sync(gio::BusType::System, gio::Cancellable::NONE) else { return };
     let args = (locked,).to_variant();
-    let report = move |e: glib::Error| eprintln!("nyx-locker: couldn't tell logind the session is {}: {e}", if locked { "locked" } else { "unlocked" });
+    let report = move |e: glib::Error| {
+        eprintln!("nyx-locker: couldn't tell logind the session is {}: {e}", if locked { "locked" } else { "unlocked" })
+    };
     if locked {
         bus.call(
             Some("org.freedesktop.login1"),

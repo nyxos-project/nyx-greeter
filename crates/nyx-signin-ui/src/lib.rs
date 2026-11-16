@@ -465,7 +465,8 @@ fn draw(s: &State, cr: &cairo::Context, w: f64, h: f64) {
             }
             let g = r * 0.42;
             // The face or fingerprint stays on a miss, in the miss's colour.
-            let phase = if s.phase == Phase::Failure && matches!(s.kind, Kind::Face | Kind::Fingerprint) { Phase::Idle } else { s.phase };
+            let phase =
+                if s.phase == Phase::Failure && matches!(s.kind, Kind::Face | Kind::Fingerprint) { Phase::Idle } else { s.phase };
             glyphs::draw(cr, s.kind, phase, cx, cy, g, &t, pulse(s, 1.3));
             if s.phase == Phase::Scanning && matches!(s.kind, Kind::Face | Kind::Fingerprint) {
                 let y = cy - g + 2.0 * g * sweep(s, 1.3);
