@@ -1,112 +1,78 @@
-/* Nyx Administrator Prompt: one quiet card over a dimmed screen. */
-
 window.nyx-prompt {
   background: transparent;
   color: @theme_text;
 }
 
-.backdrop {
-  background-color: alpha(black, 0.5);
+.nyx-prompt .backdrop {
+  background-color: alpha(black, 0.26);
+  padding: 24px;
 }
 
-.card {
+.nyx-prompt.demo .backdrop {
+  background-color: transparent;
+}
+
+.nyx-prompt .card {
   background-color: @theme_card;
   border: 1px solid @hairline;
-  border-radius: 16px;
-  padding: 28px 28px 20px;
-  box-shadow: 0 16px 48px alpha(black, 0.5);
+  border-radius: 19px;
+  padding: 22px;
+  box-shadow: 0 9px 27px alpha(black, 0.36);
 }
 
-.avatar {
-  margin-bottom: 14px;
+.nyx-prompt .badge {
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 12px;
+  background-color: alpha(@theme_accent, 0.15);
+  color: @theme_accent;
 }
 
-.initials {
-  min-width: 56px;
-  min-height: 56px;
-  border-radius: 999px;
-  background-color: @theme_accent;
-  color: @theme_on_accent;
-  font-size: 22px;
-  font-weight: 600;
+.nyx-prompt .badge image {
+  margin: 0 10px;
 }
 
-.avatar-image {
-  border-radius: 999px;
+.nyx-prompt .title {
+  font-size: 1.12em;
+  font-weight: 700;
 }
 
-.title {
-  font-size: 1.15em;
-  font-weight: 600;
-  margin-bottom: 14px;
-}
-
-.subtitle {
-  color: @theme_dim_text;
-  font-size: 0.92em;
-  margin: -8px 0 14px;
-}
-
-.who {
+.nyx-prompt .subtitle,
+.nyx-prompt .account,
+.nyx-prompt .status,
+.nyx-prompt .details {
   color: @theme_dim_text;
   font-size: 0.92em;
 }
 
-label.account {
-  margin-bottom: 14px;
+.nyx-prompt .account {
+  padding-left: 2px;
 }
 
-dropdown.account {
-  margin: 4px 0 14px;
+.nyx-prompt .password {
+  min-height: 42px;
+  border-radius: 11px;
 }
 
-entry.password {
-  min-height: 40px;
-  border-radius: 10px;
+.nyx-prompt .password.error {
+  border-color: @theme_danger;
 }
 
-.status {
-  font-size: 0.92em;
-  color: @theme_dim_text;
-  min-height: 1.4em;
-  margin: 8px 0 6px;
-}
-
-.status.error {
+.nyx-prompt .status.error {
   color: @theme_danger;
 }
 
-.use-password {
-  margin-top: 8px;
+.nyx-prompt .use-password {
   font-size: 0.9em;
 }
 
-.buttons button {
-  min-height: 36px;
+.nyx-prompt .footer button {
+  min-height: 34px;
   border-radius: 10px;
+  padding: 0 14px;
 }
 
-.details {
-  margin-top: 14px;
-  color: @theme_dim_text;
-  font-size: 0.9em;
-}
-
-.detail-text {
+.nyx-prompt .detail-text {
   font-family: monospace;
-  font-size: 0.9em;
-  margin-top: 6px;
-}
-
-.shake {
-  animation: shake 0.4s ease-in-out;
-}
-
-@keyframes shake {
-  0% { margin-left: 0; margin-right: 0; }
-  20% { margin-left: 18px; margin-right: 0; }
-  40% { margin-left: 0; margin-right: 18px; }
-  60% { margin-left: 12px; margin-right: 0; }
-  80% { margin-left: 0; margin-right: 6px; }
-  100% { margin-left: 0; margin-right: 0; }
+  margin-top: 7px;
 }

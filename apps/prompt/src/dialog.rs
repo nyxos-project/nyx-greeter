@@ -58,7 +58,6 @@ struct Dialog {
     window: gtk::Window,
     entry: gtk::PasswordEntry,
     status: gtk::Label,
-    card: gtk::Box,
     ok: gtk::Button,
     request: RefCell<Option<Request>>,
     done: RefCell<Option<Done>>,
@@ -94,23 +93,12 @@ fn full_name(user: &str) -> String {
         .unwrap_or_else(|| user.to_string())
 }
 
-fn home_of(user: &str) -> std::path::PathBuf {
-    std::fs::read_to_string("/etc/passwd")
-        .unwrap_or_default()
-        .lines()
-        .find_map(|l| {
-            let f: Vec<&str> = l.split(':').collect();
-            (f.first() == Some(&user)).then(|| f.get(5).unwrap_or(&"").into())
-        })
-        .unwrap_or_default()
-}
-
 /// Polkit's message as a title and the rest of it: without "Authentication is required
 /// to" (the card says that already), split at its first colon, capitalised.
 fn title(message: &str) -> (String, String) {
     let mut m = message.trim().trim_end_matches('.');
     for lead in ["Authentication is required to ", "Authentication is needed to "] {
-        if m.len() > lead.len() && m[..lead.len()].eq_ignore_ascii_case(lead) {
+        if m.get(..lead.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(lead)) {
             m = &m[lead.len()..];
         }
     }
@@ -127,17 +115,14 @@ fn title(message: &str) -> (String, String) {
 
 fn set_status(d: &Dialog, text: &str, error: bool) {
     d.status.set_text(text);
+    d.status.set_visible(!text.is_empty());
     if error {
+        d.entry.add_css_class("error");
         d.status.add_css_class("error");
     } else {
+        d.entry.remove_css_class("error");
         d.status.remove_css_class("error");
     }
-}
-
-fn shake(d: &Dialog) {
-    d.card.add_css_class("shake");
-    let c = d.card.clone();
-    glib::timeout_add_local_once(std::time::Duration::from_millis(450), move || c.remove_css_class("shake"));
 }
 
 fn notify_halo(event: &str) -> bool {
@@ -244,7 +229,9 @@ fn converse(d: &Rc<Dialog>) {
     let cookie = d.request.borrow().as_ref().map(|r| r.cookie.clone()).unwrap_or_default();
     let (tx, rx) = async_channel::unbounded();
     *d.talk.borrow_mut() = Some(helper::start(&d.user.borrow(), &cookie, tx));
-    set_status(d, "Checking authentication", false);
+    if !d.status.has_css_class("error") {
+        set_status(d, "Checking authentication", false);
+    }
     // Typing waits for a scan otherwise; offer the password once one is awaited.
     let wd = Rc::downgrade(d);
     glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || {
@@ -273,7 +260,9 @@ fn converse(d: &Rc<Dialog>) {
             match line {
                 Line::Request { text, echo } => {
                     d.password_phase.set(true);
-                    show_fallback(&d);
+                    if !d.status.has_css_class("error") {
+                        set_status(&d, "", false);
+                    }
                     d.asking.set(true);
                     d.use_password.set_visible(false);
                     d.entry.set_visible(true);
@@ -282,6 +271,7 @@ fn converse(d: &Rc<Dialog>) {
                     let hint = text.trim().trim_end_matches(':');
                     d.entry.set_property("placeholder-text", if hint.is_empty() { "Password" } else { hint });
                     d.ok.set_sensitive(!d.entry.text().is_empty());
+                    show_fallback(&d);
                     d.entry.grab_focus();
                 }
                 Line::Info(text) => set_status(&d, &text, false),
@@ -289,7 +279,6 @@ fn converse(d: &Rc<Dialog>) {
                 Line::Done(true) => return finish(&d, true),
                 Line::Done(false) => {
                     if d.tried.get() {
-                        shake(&d);
                         set_status(&d, "That password didn't work. Try again.", true);
                         if let Some(uid) = my_uid().filter(|uid| uid_of(&d.user.borrow()) == Some(*uid))
                             && !mark_password_first(&d.user.borrow(), uid)
@@ -317,12 +306,11 @@ fn submit(d: &Rc<Dialog>) {
     d.entry.set_text("");
     d.asking.set(false);
     d.tried.set(true);
-    set_status(d, "Checking…", false);
+    set_status(d, "Checking password", false);
     if d.demo {
         if text == "nyx" {
             finish(d, true);
         } else {
-            shake(d);
             set_status(d, "That password didn't work. Try again.", true);
             converse(d);
         }
@@ -340,7 +328,11 @@ fn window(app: &gtk::Application, demo: bool) -> gtk::Window {
     let w = gtk::Window::new();
     w.set_application(Some(app));
     w.add_css_class("nyx-prompt");
-    w.set_title(Some("Administrator password"));
+    w.set_title(Some("Administrator approval"));
+    if demo {
+        w.set_decorated(false);
+        w.add_css_class("demo");
+    }
     if !demo && gtk4_layer_shell::is_supported() {
         w.init_layer_shell();
         w.set_namespace(Some("nyx-prompt"));
@@ -363,7 +355,7 @@ pub fn demo(app: &gtk::Application) {
     let me = std::env::var("USER").unwrap_or_default();
     let req = Request {
         action: "io.github.nyxos_project.system.apply".into(),
-        message: "Nyx Welcome wants to install software and change system settings".into(),
+        message: "Authentication is required to install system updates.".into(),
         details: vec![],
         cookie: String::new(),
         users: vec![me],
@@ -377,90 +369,98 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
     let w = window(app, demo);
     let backdrop = gtk::Box::new(gtk::Orientation::Vertical, 0);
     backdrop.add_css_class("backdrop");
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 16);
     card.add_css_class("card");
     card.set_halign(gtk::Align::Center);
     card.set_valign(gtk::Align::Center);
     card.set_vexpand(true);
-    card.set_size_request(380, -1);
+    card.set_size_request(360, -1);
     backdrop.append(&card);
 
-    let user = req.users.first().cloned().unwrap_or_default();
-    let picture = nyx_signin_ui::picture_of(&user, &home_of(&user));
-    let avatar = nyx_signin_ui::avatar(picture.as_deref(), &nyx_signin_ui::initials(&full_name(&user), &user), 56);
-    avatar.set_halign(gtk::Align::Center);
-    avatar.add_css_class("avatar");
-    card.append(&avatar);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let badge = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    badge.add_css_class("badge");
+    badge.set_valign(gtk::Align::Start);
+    let icon = gtk::Image::from_icon_name("system-lock-screen-symbolic");
+    icon.set_pixel_size(18);
+    badge.append(&icon);
+    header.append(&badge);
+
+    let headings = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    headings.set_hexpand(true);
+    let heading = gtk::Label::new(Some("Administrator approval"));
+    heading.add_css_class("title");
+    heading.set_xalign(0.0);
+    headings.append(&heading);
 
     let (head, more) = title(&req.message);
-    let heading = gtk::Label::new(Some(&head));
-    heading.add_css_class("title");
-    heading.set_wrap(true);
-    heading.set_justify(gtk::Justification::Center);
-    heading.set_max_width_chars(34);
-    card.append(&heading);
-    if !more.is_empty() {
-        let l = gtk::Label::new(Some(&more));
-        l.add_css_class("subtitle");
-        l.set_wrap(true);
-        l.set_justify(gtk::Justification::Center);
-        l.set_max_width_chars(42);
-        card.append(&l);
+    for text in [head, more] {
+        if !text.is_empty() {
+            let line = gtk::Label::new(Some(&text));
+            line.add_css_class("subtitle");
+            line.set_wrap(true);
+            line.set_max_width_chars(32);
+            line.set_xalign(0.0);
+            headings.append(&line);
+        }
     }
+    header.append(&headings);
+    card.append(&header);
 
+    let user = req.users.first().cloned().unwrap_or_default();
+    let form = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let account: gtk::Widget = if req.users.len() > 1 {
-        let who = gtk::Label::new(Some("An administrator's password"));
-        who.add_css_class("who");
-        card.append(&who);
         let names: Vec<String> = req.users.iter().map(|u| full_name(u)).collect();
         let strs: Vec<&str> = names.iter().map(String::as_str).collect();
         let dd = gtk::DropDown::from_strings(&strs);
-        dd.add_css_class("account");
-        dd.set_halign(gtk::Align::Center);
+        dd.update_property(&[gtk::accessible::Property::Label("Administrator account")]);
         dd.upcast()
     } else {
-        let l = gtk::Label::new(Some(&format!("The password for {}", full_name(&user))));
-        l.add_css_class("who");
+        let l = gtk::Label::new(Some(&full_name(&user)));
+        l.set_xalign(0.0);
         l.add_css_class("account");
         l.upcast()
     };
-    card.append(&account);
+    form.append(&account);
 
     let entry = gtk::PasswordEntry::new();
     entry.set_show_peek_icon(true);
     entry.add_css_class("password");
     entry.set_property("placeholder-text", "Password");
     entry.update_property(&[gtk::accessible::Property::Label("Password")]);
-    card.append(&entry);
+    form.append(&entry);
 
     let use_password = gtk::Button::with_label("Use password instead");
     use_password.add_css_class("flat");
     use_password.add_css_class("use-password");
-    use_password.set_halign(gtk::Align::Center);
+    use_password.set_halign(gtk::Align::Start);
     use_password.set_visible(false);
     use_password.set_tooltip_text(Some("Skip the face, fingerprint or security key this time"));
-    card.append(&use_password);
+    form.append(&use_password);
 
     let status = gtk::Label::new(None);
     status.add_css_class("status");
     status.set_wrap(true);
-    status.set_justify(gtk::Justification::Center);
-    status.set_max_width_chars(40);
-    card.append(&status);
+    status.set_xalign(0.0);
+    status.set_max_width_chars(38);
+    status.set_visible(false);
+    form.append(&status);
+    card.append(&form);
 
-    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    buttons.add_css_class("buttons");
-    buttons.set_homogeneous(true);
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    footer.add_css_class("footer");
+    footer.set_halign(gtk::Align::End);
     let cancel = gtk::Button::with_label("Cancel");
-    let ok = gtk::Button::with_label("Continue");
+    cancel.add_css_class("flat");
+    let ok = gtk::Button::with_label("Approve");
     ok.add_css_class("suggested-action");
     ok.set_sensitive(false);
-    buttons.append(&cancel);
-    buttons.append(&ok);
-    card.append(&buttons);
+    footer.append(&cancel);
+    footer.append(&ok);
+    card.append(&footer);
 
     if !req.action.is_empty() {
-        let details = gtk::Expander::new(Some("Details"));
+        let details = gtk::Expander::new(Some("Request details"));
         details.add_css_class("details");
         let mut text = req.action.clone();
         for (k, v) in &req.details {
@@ -472,6 +472,8 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
         l.add_css_class("detail-text");
         l.set_selectable(true);
         l.set_wrap(true);
+        l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        l.set_max_width_chars(38);
         l.set_xalign(0.0);
         details.set_child(Some(&l));
         card.append(&details);
@@ -482,7 +484,6 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
         window: w.clone(),
         entry: entry.clone(),
         status,
-        card,
         ok: ok.clone(),
         request: RefCell::new(Some(req)),
         done: RefCell::new(Some(done)),
