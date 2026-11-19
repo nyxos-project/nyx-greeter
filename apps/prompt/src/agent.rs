@@ -169,6 +169,24 @@ pub fn register(app: &gtk::Application) -> Result<(), String> {
     let subject = ("unix-session", details);
     let locale = std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into());
     let args = (subject, locale, PATH).to_variant();
+    // A restarted authority loses its session-agent registrations. Exit with
+    // failure so the user service starts again and registers with the new owner.
+    bus.signal_subscribe(
+        Some("org.freedesktop.DBus"),
+        Some("org.freedesktop.DBus"),
+        Some("NameOwnerChanged"),
+        Some("/org/freedesktop/DBus"),
+        Some("org.freedesktop.PolicyKit1"),
+        gio::DBusSignalFlags::NONE,
+        |_, _, _, _, _, parameters| {
+            if let Some((_, previous, _)) = parameters.get::<(String, String, String)>()
+                && !previous.is_empty()
+            {
+                eprintln!("nyx-prompt: PolicyKit authority changed; restarting to register again");
+                std::process::exit(1);
+            }
+        },
+    );
     call(
         &bus,
         "org.freedesktop.PolicyKit1",

@@ -11,7 +11,13 @@ use std::rc::Rc;
 
 /// Nyx Biometrics' gate skips face, fingerprint and keys in administrator prompts while
 /// this is fresh in the person's runtime folder, so the password comes first.
-fn marker(uid: u32) -> std::path::PathBuf {
+fn marker(user: &str, uid: u32) -> std::path::PathBuf {
+    // NixOS gives each configured local account a private directory that is
+    // visible even in the socket-activated helper's ProtectHome sandbox.
+    let managed = std::path::Path::new("/run/nyx-auth/password-first").join(user);
+    if uid_of(user) == Some(uid) && managed.is_dir() {
+        return managed.join("request");
+    }
     std::path::PathBuf::from(format!("/run/user/{uid}/nyx-auth/password-first"))
 }
 
@@ -67,6 +73,8 @@ struct Dialog {
     asking: Cell<bool>,
     /// A password was sent in this conversation, so a failure means a wrong one.
     tried: Cell<bool>,
+    halo: Cell<bool>,
+    password_phase: Cell<bool>,
     demo: bool,
 }
 
@@ -132,10 +140,43 @@ fn shake(d: &Dialog) {
     glib::timeout_add_local_once(std::time::Duration::from_millis(450), move || c.remove_css_class("shake"));
 }
 
+fn notify_halo(event: &str) -> bool {
+    let Ok(configuration) = std::fs::canonicalize("/etc/nyx/auth-overlay/shell.qml") else {
+        return false;
+    };
+    std::process::Command::new("/run/current-system/sw/bin/timeout")
+        .args(["0.5s", "/etc/nyx/auth-overlay/quickshell", "ipc", "-p"])
+        .arg(configuration)
+        .args(["call", "nyx-auth", "notify", event, "polkit", "face"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn password_was_requested(user: &str) -> bool {
+    uid_of(user).is_some_and(|uid| {
+        marker(user, uid).symlink_metadata().and_then(|meta| meta.modified()).ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age < std::time::Duration::from_secs(60))
+    })
+}
+
+fn show_fallback(d: &Dialog) {
+    if d.halo.replace(false) {
+        notify_halo("clear");
+    }
+    d.window.present();
+}
+
 fn finish(d: &Rc<Dialog>, ok: bool) {
+    if d.halo.replace(false) {
+        notify_halo(if ok { "done" } else { "clear" });
+    }
     d.talk.borrow_mut().take();
     if let Some(uid) = my_uid() {
-        let _ = std::fs::remove_file(marker(uid));
+        let _ = std::fs::remove_file(marker(&d.user.borrow(), uid));
     }
     d.window.close();
     CURRENT.with(|c| c.borrow_mut().take());
@@ -151,20 +192,21 @@ pub fn cancel_shown() {
     }
 }
 
-/// Skip the face, finger or key this time: mark it for the gate and start the
-/// conversation again, which now asks for the password straight away. Only for your own
-/// account, whose runtime folder the gate reads.
+fn mark_password_first(user: &str, uid: u32) -> bool {
+    let path = marker(user, uid);
+    path.parent().is_some_and(|dir| {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).is_ok()
+    }) && std::fs::write(&path, "").is_ok()
+}
+
+/// Restart the conversation with the password for the session's own account.
 fn password_first(d: &Rc<Dialog>) {
     if d.asking.get() || d.restarting.get() || d.demo {
         return;
     }
     let Some(uid) = my_uid().filter(|u| uid_of(&d.user.borrow()) == Some(*u)) else { return };
-    let path = marker(uid);
-    let made = path.parent().is_some_and(|dir| {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).is_ok()
-    }) && std::fs::write(&path, "").is_ok();
-    if !made {
+    if !mark_password_first(&d.user.borrow(), uid) {
         return;
     }
     d.use_password.set_visible(false);
@@ -181,20 +223,35 @@ fn converse(d: &Rc<Dialog>) {
     d.asking.set(false);
     d.restarting.set(false);
     d.use_password.set_visible(false);
+    d.entry.set_visible(false);
+    d.ok.set_visible(false);
     if d.demo {
+        d.entry.set_visible(true);
+        d.ok.set_visible(true);
+        d.window.present();
         d.asking.set(true);
         d.entry.grab_focus();
         return;
     }
+    let own_account = my_uid().is_some_and(|uid| uid_of(&d.user.borrow()) == Some(uid));
+    let face_enabled = std::path::Path::new("/etc/nyx/auth-overlay/polkit-face").is_file();
+    let face_first = face_enabled && own_account && !d.password_phase.get()
+        && !password_was_requested(&d.user.borrow());
+    d.halo.set(face_first && notify_halo("start"));
+    if !face_first {
+        d.window.present();
+    }
     let cookie = d.request.borrow().as_ref().map(|r| r.cookie.clone()).unwrap_or_default();
     let (tx, rx) = async_channel::unbounded();
     *d.talk.borrow_mut() = Some(helper::start(&d.user.borrow(), &cookie, tx));
+    set_status(d, "Checking authentication", false);
     // Typing waits for a scan otherwise; offer the password once one is awaited.
     let wd = Rc::downgrade(d);
     glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || {
         if let Some(d) = wd.upgrade()
             && !d.asking.get()
             && !d.restarting.get()
+            && !d.halo.get()
             && d.talk.borrow().is_some()
             && my_uid().is_some_and(|u| uid_of(&d.user.borrow()) == Some(u))
         {
@@ -215,8 +272,12 @@ fn converse(d: &Rc<Dialog>) {
             }
             match line {
                 Line::Request { text, echo } => {
+                    d.password_phase.set(true);
+                    show_fallback(&d);
                     d.asking.set(true);
                     d.use_password.set_visible(false);
+                    d.entry.set_visible(true);
+                    d.ok.set_visible(true);
                     d.entry.set_show_peek_icon(!echo);
                     let hint = text.trim().trim_end_matches(':');
                     d.entry.set_property("placeholder-text", if hint.is_empty() { "Password" } else { hint });
@@ -230,8 +291,15 @@ fn converse(d: &Rc<Dialog>) {
                     if d.tried.get() {
                         shake(&d);
                         set_status(&d, "That password didn't work. Try again.", true);
+                        if let Some(uid) = my_uid().filter(|uid| uid_of(&d.user.borrow()) == Some(*uid))
+                            && !mark_password_first(&d.user.borrow(), uid)
+                        {
+                            set_status(&d, "This can't be checked right now.", true);
+                            return;
+                        }
                         converse(&d);
                     } else {
+                        show_fallback(&d);
                         set_status(&d, "This can't be checked right now.", true);
                     }
                     return;
@@ -424,6 +492,8 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
         use_password: use_password.clone(),
         asking: Cell::new(false),
         tried: Cell::new(false),
+        halo: Cell::new(false),
+        password_phase: Cell::new(false),
         demo,
     });
     CURRENT.with(|c| *c.borrow_mut() = Some(d.clone()));
@@ -488,7 +558,6 @@ fn build(app: &gtk::Application, req: Request, done: Done, demo: bool) {
             d.entry.grab_focus();
         }
     });
-    w.present();
     converse(&d);
 }
 

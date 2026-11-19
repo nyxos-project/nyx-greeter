@@ -18,16 +18,18 @@ use std::rc::Rc;
 pub enum Style {
     #[default]
     Circular,
+    Halo,
     Cyberpunk,
     Minimal,
     Edge,
 }
 
 impl Style {
-    pub const ALL: [Style; 4] = [Style::Circular, Style::Cyberpunk, Style::Minimal, Style::Edge];
+    pub const ALL: [Style; 5] = [Style::Halo, Style::Circular, Style::Cyberpunk, Style::Minimal, Style::Edge];
 
     pub fn parse(s: &str) -> Option<Style> {
         Some(match s {
+            "halo" => Style::Halo,
             "circular" => Style::Circular,
             "cyberpunk" => Style::Cyberpunk,
             "minimal" => Style::Minimal,
@@ -38,6 +40,7 @@ impl Style {
 
     pub fn id(self) -> &'static str {
         match self {
+            Style::Halo => "halo",
             Style::Circular => "circular",
             Style::Cyberpunk => "cyberpunk",
             Style::Minimal => "minimal",
@@ -47,6 +50,7 @@ impl Style {
 
     pub fn name(self) -> &'static str {
         match self {
+            Style::Halo => "Halo",
             Style::Circular => "Circular face scan",
             Style::Cyberpunk => "Cyberpunk scanner",
             Style::Minimal => "Minimal floating",
@@ -313,6 +317,7 @@ impl Indicator {
         let (w, h) = match (s.style, s.size) {
             (Style::Edge, _) => (0, 0),
             (_, Some(side)) => (side, side),
+            (Style::Halo, None) => (150, 150),
             (Style::Circular, None) => (140, 140),
             (Style::Cyberpunk, None) => (156, 156),
             (Style::Minimal, None) => (44, 44),
@@ -439,6 +444,34 @@ fn draw(s: &State, cr: &cairo::Context, w: f64, h: f64) {
     cr.translate(shake(s), 0.0);
     let t = tone(s);
     match s.style {
+        Style::Halo => {
+            let (cx, cy) = (w / 2.0, h / 2.0);
+            let scale = w.min(h) / 150.0;
+            let radius = 66.0 * scale;
+            cr.set_line_cap(cairo::LineCap::Round);
+            cr.set_line_width(1.5 * scale);
+            source(cr, &s.colours.text, 0.07);
+            for radius in [radius, 56.0 * scale] {
+                cr.arc(cx, cy, radius, 0.0, 2.0 * PI);
+                let _ = cr.stroke();
+            }
+            cr.set_line_width(3.0 * scale);
+            if s.phase == Phase::Scanning {
+                let angle = elapsed(s) * 2.0 * PI / 2.4;
+                source(cr, &t, 0.85);
+                cr.arc(cx, cy, radius, angle, angle + 0.5 * PI);
+                let _ = cr.stroke();
+                source(cr, &t, 0.425);
+                cr.arc(cx, cy, 56.0 * scale, -1.4 * angle, -1.4 * angle + 0.3 * PI);
+                let _ = cr.stroke();
+            } else if s.phase != Phase::Idle {
+                source(cr, &t, 0.85);
+                cr.arc(cx, cy, radius, 0.0, 2.0 * PI);
+                let _ = cr.stroke();
+            }
+            let opacity = if s.phase == Phase::Idle { 0.55 } else { 1.0 };
+            glyphs::draw(cr, s.kind, s.phase, cx, cy, 23.0 * scale, &t, opacity);
+        }
         Style::Circular => {
             let (cx, cy, r) = (w / 2.0, h / 2.0, w.min(h) / 2.0 - 4.0);
             cr.arc(cx, cy, r, 0.0, 2.0 * PI);
